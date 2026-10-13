@@ -1,0 +1,87 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "default",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+            "cacheVariables": {}
+        },
+        {
+            "name": "Debug",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "APP_LOG_MODE": "TEXT"
+            }
+        },
+        {
+            "name": "Release",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "APP_LOG_MODE": "TEXT"
+            }
+        },
+        {
+            "name": "GIMBAL_VOFA",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "APP_BOARD": "GIMBAL",
+                "APP_LOG_MODE": "VOFA"
+            }
+        },
+        {
+            "name": "GIMBAL_TEXT",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "APP_BOARD": "GIMBAL",
+                "APP_LOG_MODE": "TEXT"
+            }
+        },
+        {
+            "name": "CHASSIS_VOFA",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "APP_BOARD": "CHASSIS",
+                "APP_LOG_MODE": "VOFA"
+            }
+        },
+        {
+            "name": "CHASSIS_TEXT",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "APP_BOARD": "CHASSIS",
+                "APP_LOG_MODE": "TEXT"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "Debug",
+            "configurePreset": "Debug"
+        },
+        {
+            "name": "Release",
+            "configurePreset": "Release"
+        },
+        {
+            "name": "GIMBAL_VOFA",
+            "configurePreset": "GIMBAL_VOFA"
+        },
+        {
+            "name": "GIMBAL_TEXT",
+            "configurePreset": "GIMBAL_TEXT"
+        },
+        {
+            "name": "CHASSIS_VOFA",
+            "configurePreset": "CHASSIS_VOFA"
+        },
+        {
+            "name": "CHASSIS_TEXT",
+            "configurePreset": "CHASSIS_TEXT"
+        }
+    ]
+}

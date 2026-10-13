@@ -1,0 +1,60 @@
+# CMake build output
+/build/
+/cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Testing/
+
+# STM32CubeIDE build folders
+/Debug/
+/Release/
+
+# Keil MDK build output
+/MDK-ARM/Objects/
+/MDK-ARM/Listings/
+
+# Compiled firmware and intermediate files
+*.o
+*.obj
+*.a
+*.lib
+*.elf
+*.axf
+*.out
+*.hex
+*.bin
+*.map
+*.lst
+*.list
+*.d
+*.dep
+*.crf
+*.cyclo
+*.su
+
+# Local IDE/workspace settings
+/.idea/
+/.vscode/
+*.uvguix.*
+*.uvoptx
+
+# OS/editor temporary files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+/FREERTOS_IMPLEMENTATION.md
+/FREERTOS_VALIDATION.md
+/tests/host/bsp_gpio.h
+/tests/host/bsp_spi.h
+/tests/host/bsp_tim.h
+/tests/host/bsp_uart.h
+/tests/host/FreeRTOS.h
+/tests/host/run_tests.ps1
+/tests/host/task.h
+/tests/host/test_imu_port.c
+/tests/host/test_runtime.c
+/tests/host/test_uart_ports.c

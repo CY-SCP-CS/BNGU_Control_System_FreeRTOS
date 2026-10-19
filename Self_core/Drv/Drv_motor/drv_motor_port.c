@@ -9,10 +9,9 @@
 #include "bsp_can.h"
 
 void drv_motor_port_can_init(void *hcan, uint32_t can_id,
-                              void (*rx_cb)(uint32_t, uint8_t*, uint8_t))
+                             void (*rx_cb)(uint32_t, uint8_t *, uint8_t))
 {
-    bsp_can_rx_reg((CAN_HandleTypeDef *)hcan, can_id,
-                                 (bsp_can_rx_callback_t)rx_cb);
+    bsp_can_rx_reg((CAN_HandleTypeDef *)hcan, can_id, (bsp_can_rx_callback_t)rx_cb);
 }
 
 void drv_motor_port_can_tx(void *hcan, uint32_t std_id, uint8_t *data)

@@ -6,8 +6,7 @@
 
 void bsp_gpio_write_pin(GPIO_TypeDef *port, uint16_t pin, uint8_t state)
 {
-    HAL_GPIO_WritePin(port, pin,
-        state ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(port, pin, state ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
 void bsp_gpio_toggle_pin(GPIO_TypeDef *port, uint16_t pin)

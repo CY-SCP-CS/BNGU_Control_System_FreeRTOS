@@ -17,25 +17,28 @@ static uint32_t get_timer_clock(TIM_HandleTypeDef *htim)
     uint32_t clk;
 
     /* APB2：TIM1、TIM8~TIM11。 */
-    switch ((uint32_t)htim->Instance) {
-    case (uint32_t)TIM1:
-    case (uint32_t)TIM8:
-    case (uint32_t)TIM9:
-    case (uint32_t)TIM10:
-    case (uint32_t)TIM11:
-        clk = HAL_RCC_GetPCLK2Freq();
-        if (READ_BIT(RCC->CFGR, RCC_CFGR_PPRE2) != 0U) {
-            clk *= 2U;
-        }
-        break;
+    switch ((uint32_t)htim->Instance)
+    {
+        case (uint32_t)TIM1:
+        case (uint32_t)TIM8:
+        case (uint32_t)TIM9:
+        case (uint32_t)TIM10:
+        case (uint32_t)TIM11:
+            clk = HAL_RCC_GetPCLK2Freq();
+            if (READ_BIT(RCC->CFGR, RCC_CFGR_PPRE2) != 0U)
+            {
+                clk *= 2U;
+            }
+            break;
 
-    /* APB1：其余通用和基础定时器。 */
-    default:
-        clk = HAL_RCC_GetPCLK1Freq();
-        if (READ_BIT(RCC->CFGR, RCC_CFGR_PPRE1) != 0U) {
-            clk *= 2U;
-        }
-        break;
+        /* APB1：其余通用和基础定时器。 */
+        default:
+            clk = HAL_RCC_GetPCLK1Freq();
+            if (READ_BIT(RCC->CFGR, RCC_CFGR_PPRE1) != 0U)
+            {
+                clk *= 2U;
+            }
+            break;
     }
 
     return clk;
@@ -51,14 +54,12 @@ void bsp_tim_pwm_stop(TIM_HandleTypeDef *htim, uint32_t channel)
     (void)HAL_TIM_PWM_Stop(htim, channel);
 }
 
-void bsp_tim_pwm_set_compare(TIM_HandleTypeDef *htim, uint32_t channel,
-                             uint32_t compare)
+void bsp_tim_pwm_set_compare(TIM_HandleTypeDef *htim, uint32_t channel, uint32_t compare)
 {
     __HAL_TIM_SET_COMPARE(htim, channel, compare);
 }
 
-void bsp_tim_pwm_set_freq(TIM_HandleTypeDef *htim, uint32_t channel,
-                          uint32_t freq_hz)
+void bsp_tim_pwm_set_freq(TIM_HandleTypeDef *htim, uint32_t channel, uint32_t freq_hz)
 {
     uint32_t timer_clk;
     uint32_t psc;
@@ -67,7 +68,8 @@ void bsp_tim_pwm_set_freq(TIM_HandleTypeDef *htim, uint32_t channel,
     uint32_t old_ccr;
     uint32_t new_ccr;
 
-    if (!htim || freq_hz == 0U) {
+    if (!htim || freq_hz == 0U)
+    {
         return;
     }
 
@@ -80,9 +82,12 @@ void bsp_tim_pwm_set_freq(TIM_HandleTypeDef *htim, uint32_t channel,
     arr = (timer_clk / (psc + 1U) / freq_hz) - 1U;
 
     /* 改频后按比例保留原有占空比。 */
-    if (old_arr > 0U && old_ccr > 0U) {
+    if (old_arr > 0U && old_ccr > 0U)
+    {
         new_ccr = (uint32_t)((uint64_t)old_ccr * arr / old_arr);
-    } else {
+    }
+    else
+    {
         new_ccr = 0U;
     }
 
@@ -101,8 +106,7 @@ void bsp_tim_it_stop(TIM_HandleTypeDef *htim)
     (void)HAL_TIM_Base_Stop_IT(htim);
 }
 
-void bsp_tim_reg_callback(TIM_HandleTypeDef *htim,
-                          bsp_tim_period_callback_t callback)
+void bsp_tim_reg_callback(TIM_HandleTypeDef *htim, bsp_tim_period_callback_t callback)
 {
     s_period_htim = htim;
     s_period_callback = callback;
@@ -113,7 +117,8 @@ void bsp_tim_reg_callback(TIM_HandleTypeDef *htim,
  */
 void bsp_tim_period_elapsed_callback(TIM_HandleTypeDef *htim)
 {
-    if (htim == s_period_htim && s_period_callback) {
+    if (htim == s_period_htim && s_period_callback)
+    {
         s_period_callback();
     }
 }

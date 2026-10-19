@@ -10,14 +10,15 @@
 
 // ─── 功率计数据 ─────────────────────────────────
 
-#define DRV_POWER_CAN_ID    0x212
+#define DRV_POWER_CAN_ID 0x212
 
-typedef struct {
+typedef struct
+{
     uint16_t bat_v;     /* 电池电压 (0.01V)                   */
     uint16_t bat_i;     /* 电池电流 (0.01A)                   */
     uint16_t reserved0; /* 当前功率计固件固定发送 0xFFFF      */
     uint16_t reserved1; /* 当前功率计固件固定发送 0xFFFF      */
-    float    power;     /* 电池侧实测功率 (W), bat_v * bat_i */
+    float power;        /* 电池侧实测功率 (W), bat_v * bat_i */
 } drv_power_data_t;
 
 // ─── 接口声明 ─────────────────────────────────────
@@ -36,7 +37,6 @@ void drv_power_solve(const uint8_t can_data[8], drv_power_data_t *data);
  * @param  hcan   CAN 句柄 (void*)
  * @param  rx_cb  接收回调
  */
-void drv_power_port_can_init(void *hcan,
-                              void (*rx_cb)(uint32_t, uint8_t*, uint8_t));
+void drv_power_port_can_init(void *hcan, void (*rx_cb)(uint32_t, uint8_t *, uint8_t));
 
 #endif

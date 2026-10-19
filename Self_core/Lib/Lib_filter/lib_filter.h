@@ -8,19 +8,21 @@
 #include "lib_typedef.h"
 
 /** 一阶低通滤波器状态。 */
-typedef struct {
-    float out;          // 上一次滤波输出。
-    float cutoff_hz;    // -3 dB 截止频率，单位 Hz。
-    uint8_t initialized;// 首次采样标志。
+typedef struct
+{
+    float out;           // 上一次滤波输出。
+    float cutoff_hz;     // -3 dB 截止频率，单位 Hz。
+    uint8_t initialized; // 首次采样标志。
 } lib_lpf_t;
 
 /** 滑动窗口滤波器状态；缓冲区由调用者提供。 */
-typedef struct {
-    float    *buf;      // 环形缓冲区。
-    uint16_t  len;      // 窗口长度。
-    uint16_t  idx;      // 当前写入位置。
-    float     sum;      // 窗口内样本总和。
-    uint8_t   filled;   // 缓冲区是否已填满。
+typedef struct
+{
+    float *buf;     // 环形缓冲区。
+    uint16_t len;   // 窗口长度。
+    uint16_t idx;   // 当前写入位置。
+    float sum;      // 窗口内样本总和。
+    uint8_t filled; // 缓冲区是否已填满。
 } lib_swf_t;
 
 /**

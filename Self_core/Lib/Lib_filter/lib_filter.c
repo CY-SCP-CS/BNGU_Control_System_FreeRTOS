@@ -4,7 +4,8 @@
 
 void lib_lpf_init(lib_lpf_t *lpf, float cutoff_hz)
 {
-    if (!lpf) {
+    if (!lpf)
+    {
         return;
     }
     lpf->out = 0.0f;
@@ -15,10 +16,12 @@ void lib_lpf_init(lib_lpf_t *lpf, float cutoff_hz)
 float lib_lpf_update(lib_lpf_t *lpf, float input, float dt)
 {
     float alpha;
-    if (!lpf || dt <= 0.0f || lpf->cutoff_hz <= 0.0f) {
+    if (!lpf || dt <= 0.0f || lpf->cutoff_hz <= 0.0f)
+    {
         return input;
     }
-    if (!lpf->initialized) {
+    if (!lpf->initialized)
+    {
         lpf->out = input;
         lpf->initialized = 1U;
         return lpf->out;
@@ -30,7 +33,8 @@ float lib_lpf_update(lib_lpf_t *lpf, float input, float dt)
 
 void lib_swf_init(lib_swf_t *swf, float *buf, uint16_t len)
 {
-    if (!swf || !buf || len == 0U) {
+    if (!swf || !buf || len == 0U)
+    {
         return;
     }
     memset(buf, 0, len * sizeof(float));
@@ -44,7 +48,8 @@ void lib_swf_init(lib_swf_t *swf, float *buf, uint16_t len)
 float lib_swf_update(lib_swf_t *swf, float input)
 {
     uint16_t count;
-    if (!swf || !swf->buf || swf->len == 0U) {
+    if (!swf || !swf->buf || swf->len == 0U)
+    {
         return input;
     }
     count = swf->idx + 1U;
@@ -52,7 +57,8 @@ float lib_swf_update(lib_swf_t *swf, float input)
     swf->buf[swf->idx] = input;
     swf->sum += input;
     swf->idx++;
-    if (swf->idx >= swf->len) {
+    if (swf->idx >= swf->len)
+    {
         swf->idx = 0U;
         swf->filled = 1U;
     }

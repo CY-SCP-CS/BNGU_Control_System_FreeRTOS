@@ -14,9 +14,13 @@ static TIM_HandleTypeDef *s_port_htim = &htim4;
 static void port_buzzer_set(uint8_t state)
 {
     if (state)
+    {
         bsp_tim_pwm_start(s_port_htim, TIM_CHANNEL_3);
+    }
     else
+    {
         bsp_tim_pwm_stop(s_port_htim, TIM_CHANNEL_3);
+    }
 }
 
 static void port_buzzer_set_freq(uint16_t freq_hz)

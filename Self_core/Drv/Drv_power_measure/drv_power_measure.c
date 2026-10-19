@@ -6,7 +6,8 @@
 
 void drv_power_solve(const uint8_t can_data[8], drv_power_data_t *data)
 {
-    if (!can_data || !data) {
+    if (!can_data || !data)
+    {
         return;
     }
 

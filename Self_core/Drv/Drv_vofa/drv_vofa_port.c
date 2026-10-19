@@ -13,7 +13,8 @@ static volatile uint8_t s_tx_busy;
 
 static void drv_vofa_port_tx_cplt(UART_HandleTypeDef *huart)
 {
-    if (huart == &huart1) {
+    if (huart == &huart1)
+    {
         s_tx_busy = 0U;
     }
 }
@@ -31,7 +32,8 @@ drv_vofa_status_t drv_vofa_port_send(const float data[DRV_VOFA_CHANNEL_COUNT])
 
     irq_state = __get_PRIMASK();
     __disable_irq();
-    if (s_tx_busy) {
+    if (s_tx_busy)
+    {
         __set_PRIMASK(irq_state);
         return DRV_VOFA_ERR_BUSY;
     }
@@ -40,13 +42,14 @@ drv_vofa_status_t drv_vofa_port_send(const float data[DRV_VOFA_CHANNEL_COUNT])
     __set_PRIMASK(irq_state);
 
     pack_status = drv_vofa_pack(data, s_tx_frame);
-    if (pack_status != DRV_VOFA_OK) {
+    if (pack_status != DRV_VOFA_OK)
+    {
         s_tx_busy = 0U;
         return pack_status;
     }
 
-    if (bsp_uart_tx(&huart1, s_tx_frame,
-                    (uint16_t)sizeof(s_tx_frame)) != HAL_OK) {
+    if (bsp_uart_tx(&huart1, s_tx_frame, (uint16_t)sizeof(s_tx_frame)) != HAL_OK)
+    {
         s_tx_busy = 0U;
         return DRV_VOFA_ERR_UART;
     }

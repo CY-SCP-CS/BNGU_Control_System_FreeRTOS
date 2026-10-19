@@ -15,7 +15,8 @@ drv_vofa_status_t drv_vofa_pack(const float data[DRV_VOFA_CHANNEL_COUNT],
 {
     static const uint8_t tail[DRV_VOFA_TAIL_SIZE] = {0x00U, 0x00U, 0x80U, 0x7fU};
 
-    if (!data || !frame) {
+    if (!data || !frame)
+    {
         return DRV_VOFA_ERR_ARGUMENT;
     }
 

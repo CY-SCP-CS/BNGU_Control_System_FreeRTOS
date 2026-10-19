@@ -6,11 +6,11 @@
 
 // ─── 私有变量 ────────────────────────────────────
 
-static drv_buzzer_set_fn_t  s_set;//设置开关的指针函数
-static drv_buzzer_freq_fn_t s_set_freq;//设置频率的指针函数
-static drv_buzzer_duty_fn_t s_set_duty;//设置占空比的指针函数
-static uint8_t              s_state;    //0=关, 1=开
-static uint16_t             s_freq_hz;  //当前频率
+static drv_buzzer_set_fn_t s_set;       //设置开关的指针函数
+static drv_buzzer_freq_fn_t s_set_freq; //设置频率的指针函数
+static drv_buzzer_duty_fn_t s_set_duty; //设置占空比的指针函数
+static uint8_t s_state;                 //0=关, 1=开
+static uint16_t s_freq_hz;              //当前频率
 
 // ─── 私有函数声明 ────────────────────────────────
 
@@ -21,13 +21,13 @@ static void buzzer_write(uint8_t state);
 void drv_buzzer_init(drv_buzzer_set_fn_t set, drv_buzzer_freq_fn_t set_freq,
                      drv_buzzer_duty_fn_t set_duty)
 {
-    s_set      = set;
+    s_set = set;
     s_set_freq = set_freq;
     s_set_duty = set_duty;
-    s_state    = 0;
-    s_freq_hz  = 0;
+    s_state = 0;
+    s_freq_hz = 0;
 
-    buzzer_write(0);  /* 默认关闭 */
+    buzzer_write(0); /* 默认关闭 */
 }
 
 void drv_buzzer_on(void)
@@ -47,7 +47,10 @@ void drv_buzzer_toggle(void)
 
 void drv_buzzer_set_freq(uint16_t freq_hz)
 {
-    if (!s_set_freq) return;
+    if (!s_set_freq)
+    {
+        return;
+    }
 
     s_freq_hz = freq_hz;
     s_set_freq(freq_hz);
@@ -55,7 +58,10 @@ void drv_buzzer_set_freq(uint16_t freq_hz)
 
 void drv_buzzer_set_duty(uint16_t duty)
 {
-    if (!s_set_duty) return;
+    if (!s_set_duty)
+    {
+        return;
+    }
 
     s_set_duty(duty);
 }
@@ -64,7 +70,10 @@ void drv_buzzer_set_duty(uint16_t duty)
 
 static void buzzer_write(uint8_t state)
 {
-    if (!s_set) return;
+    if (!s_set)
+    {
+        return;
+    }
 
     s_state = state;
     s_set(state);

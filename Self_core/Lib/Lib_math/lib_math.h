@@ -7,12 +7,12 @@
 
 #include "lib_typedef.h"
 
-#define LIB_PI  3.14159265358979323846f
+#define LIB_PI 3.14159265358979323846f
 
-#define LIB_ENC13_TO_RAD  0U  // 13 位编码器值转换为 rad。
-#define LIB_RAD_TO_ENC13  1U  // rad 转换为 13 位编码器计数。
-#define LIB_ENC16_TO_RAD  2U  // 16 位编码器值转换为 rad。
-#define LIB_RAD_TO_ENC16  3U  // rad 转换为 16 位编码器计数。
+#define LIB_ENC13_TO_RAD 0U // 13 位编码器值转换为 rad。
+#define LIB_RAD_TO_ENC13 1U // rad 转换为 13 位编码器计数。
+#define LIB_ENC16_TO_RAD 2U // 16 位编码器值转换为 rad。
+#define LIB_RAD_TO_ENC16 3U // rad 转换为 16 位编码器计数。
 
 /**
  * @brief  将值限制在闭区间 [min, max] 内。
@@ -32,8 +32,7 @@ float lib_clamp(float value, float min, float max);
  * @param  out_max 输入为 in_max 时的输出值。
  * @return 映射后的输出值。
  */
-float lib_remap_clamp(float value, float in_min, float in_max,
-                      float out_min, float out_max);
+float lib_remap_clamp(float value, float in_min, float in_max, float out_min, float out_max);
 
 /**
  * @brief  计算目标角度相对测量角度的最短有符号差。

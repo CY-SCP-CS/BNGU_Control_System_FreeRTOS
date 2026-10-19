@@ -12,12 +12,13 @@
 
 // ─── 固定协议布局 ─────────────────────────────────
 
-#define DRV_VOFA_CHANNEL_COUNT  8U
-#define DRV_VOFA_TAIL_SIZE      4U
-#define DRV_VOFA_DATA_SIZE      (DRV_VOFA_CHANNEL_COUNT * sizeof(float))
-#define DRV_VOFA_FRAME_SIZE     (DRV_VOFA_DATA_SIZE + DRV_VOFA_TAIL_SIZE)
+#define DRV_VOFA_CHANNEL_COUNT 8U
+#define DRV_VOFA_TAIL_SIZE 4U
+#define DRV_VOFA_DATA_SIZE (DRV_VOFA_CHANNEL_COUNT * sizeof(float))
+#define DRV_VOFA_FRAME_SIZE (DRV_VOFA_DATA_SIZE + DRV_VOFA_TAIL_SIZE)
 
-typedef enum {
+typedef enum
+{
     DRV_VOFA_OK = 0,
     DRV_VOFA_ERR_BUSY = -1,
     DRV_VOFA_ERR_ARGUMENT = -2,

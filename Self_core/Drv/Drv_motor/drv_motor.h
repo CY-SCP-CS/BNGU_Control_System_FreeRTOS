@@ -6,27 +6,28 @@
 #define DRV_MOTOR_H
 
 #include "lib_typedef.h"
+
 //翎控电机没有做完整适配，达妙没写过，均待补充
 
-typedef struct {
-    uint8_t  cmd_id;//命令ID
-    int16_t  speed;//转速
-    uint16_t angle;//编码器值
-    uint8_t  temperature;//温度
-    int16_t  current;//当前电流
+typedef struct
+{
+    uint8_t cmd_id;      //命令ID
+    int16_t speed;       //转速
+    uint16_t angle;      //编码器值
+    uint8_t temperature; //温度
+    int16_t current;     //当前电流
 } drv_motor_data_t;
 
-#define DRV_MOTOR_DJI_FRAME_MAX  4   /* 每帧最多 4 路电机 */
+#define DRV_MOTOR_DJI_FRAME_MAX 4 /* 每帧最多 4 路电机 */
 
 /* DJI 电机电流指令范围与减速比。 */
-#define DRV_MOTOR_GM6020_CURRENT_MIN       (-16384.0f)
-#define DRV_MOTOR_GM6020_CURRENT_MAX         16384.0f
-#define DRV_MOTOR_M3508_CURRENT_MIN        (-16384.0f)
-#define DRV_MOTOR_M3508_CURRENT_MAX          16384.0f
-#define DRV_MOTOR_M2006_CURRENT_MIN        (-10000.0f)
-#define DRV_MOTOR_M2006_CURRENT_MAX          10000.0f
-#define DRV_MOTOR_M3508_REDUCTION         19.0f
-
+#define DRV_MOTOR_GM6020_CURRENT_MIN (-16384.0f)
+#define DRV_MOTOR_GM6020_CURRENT_MAX 16384.0f
+#define DRV_MOTOR_M3508_CURRENT_MIN (-16384.0f)
+#define DRV_MOTOR_M3508_CURRENT_MAX 16384.0f
+#define DRV_MOTOR_M2006_CURRENT_MIN (-10000.0f)
+#define DRV_MOTOR_M2006_CURRENT_MAX 10000.0f
+#define DRV_MOTOR_M3508_REDUCTION 19.0f
 
 //外部接口
 /**
@@ -48,8 +49,7 @@ void drv_motor_reset_frame(uint8_t *frame);
  * @param  slot     槽位 [0..3], 对应帧内位置
  * @param  current  电流值 (大端编码)
  */
-void drv_motor_set_dji(uint8_t *frame, uint8_t slot,
-                                   int16_t current);
+void drv_motor_set_dji(uint8_t *frame, uint8_t slot, int16_t current);
 
 /**
  * @brief  解析翎控电机回传数据
@@ -80,7 +80,7 @@ void drv_motor_set_lk(uint8_t *frame, int16_t current);
  * @param  rx_cb   接收回调
  */
 void drv_motor_port_can_init(void *hcan, uint32_t can_id,
-                              void (*rx_cb)(uint32_t, uint8_t*, uint8_t));
+                             void (*rx_cb)(uint32_t, uint8_t *, uint8_t));
 
 /**
  * @brief  CAN 发送 (非阻塞)

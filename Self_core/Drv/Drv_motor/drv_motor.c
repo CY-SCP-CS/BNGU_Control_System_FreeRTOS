@@ -10,10 +10,10 @@
 
 void drv_motor_solve_dji(const uint8_t *data, drv_motor_data_t *cur)
 {
-    cur->angle       = (uint16_t)data[0] << 8 | data[1];
-    cur->speed       = (int16_t)((uint16_t)data[2] << 8 | data[3]);
-    cur->current     = (int16_t)((uint16_t)data[4] << 8 | data[5]);
-    cur->temperature = data[6];//大端序
+    cur->angle = (uint16_t)data[0] << 8 | data[1];
+    cur->speed = (int16_t)((uint16_t)data[2] << 8 | data[3]);
+    cur->current = (int16_t)((uint16_t)data[4] << 8 | data[5]);
+    cur->temperature = data[6]; //大端序
 }
 
 void drv_motor_reset_frame(uint8_t *frame)
@@ -21,21 +21,23 @@ void drv_motor_reset_frame(uint8_t *frame)
     memset(frame, 0, 8);
 }
 
-void drv_motor_set_dji(uint8_t *frame, uint8_t slot,
-                                   int16_t current)
+void drv_motor_set_dji(uint8_t *frame, uint8_t slot, int16_t current)
 {
-    if (slot >= DRV_MOTOR_DJI_FRAME_MAX) return;
-    frame[slot * 2]     = LIB_HI_BYTE(current);
+    if (slot >= DRV_MOTOR_DJI_FRAME_MAX)
+    {
+        return;
+    }
+    frame[slot * 2] = LIB_HI_BYTE(current);
     frame[slot * 2 + 1] = LIB_LO_BYTE(current);
 }
 
 void drv_motor_solve_lk(const uint8_t *data, drv_motor_data_t *cur)
 {
-    cur->cmd_id      = data[0];
+    cur->cmd_id = data[0];
     cur->temperature = data[1];
-    cur->current     = (int16_t)((uint16_t)data[2] | (uint16_t)data[3] << 8);
-    cur->speed       = (int16_t)((uint16_t)data[4] | (uint16_t)data[5] << 8);
-    cur->angle       = (uint16_t)data[6] | (uint16_t)data[7] << 8;//小端序
+    cur->current = (int16_t)((uint16_t)data[2] | (uint16_t)data[3] << 8);
+    cur->speed = (int16_t)((uint16_t)data[4] | (uint16_t)data[5] << 8);
+    cur->angle = (uint16_t)data[6] | (uint16_t)data[7] << 8; //小端序
 }
 
 void drv_motor_get_lk(uint8_t *frame)

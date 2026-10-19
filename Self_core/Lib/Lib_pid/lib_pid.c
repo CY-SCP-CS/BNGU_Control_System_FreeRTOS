@@ -24,8 +24,8 @@ static void pid_update_error(lib_pid_t *pid, float error)
     pid->err = error;
 }
 
-static float pid_apply(lib_pid_t *pid, float error, float p_term,
-                       float d_term, float ff_term, float dt)
+static float pid_apply(lib_pid_t *pid, float error, float p_term, float d_term, float ff_term,
+                       float dt)
 {
     float base_output = p_term + d_term + ff_term;
     float integral_prev;
@@ -34,7 +34,8 @@ static float pid_apply(lib_pid_t *pid, float error, float p_term,
     float i_term_next;
     float output_raw;
 
-    if (pid->ki == 0.0f) {
+    if (pid->ki == 0.0f)
+    {
         pid->integral = 0.0f;
         pid->out = lib_clamp(base_output, pid->min_out, pid->max_out);
         return pid->out;
@@ -47,15 +48,16 @@ static float pid_apply(lib_pid_t *pid, float error, float p_term,
     integral_next = i_term_next / pid->ki;
     output_raw = base_output + i_term_next;
 
-    if (output_raw > pid->max_out && i_term_next > i_term_prev) {
-        float i_term_limit = pid_clamp_symmetric(pid->max_out - base_output,
-                                                  pid->max_iout);
+    if (output_raw > pid->max_out && i_term_next > i_term_prev)
+    {
+        float i_term_limit = pid_clamp_symmetric(pid->max_out - base_output, pid->max_iout);
         i_term_next = i_term_limit > i_term_prev ? i_term_limit : i_term_prev;
         integral_next = i_term_next / pid->ki;
         output_raw = base_output + i_term_next;
-    } else if (output_raw < pid->min_out && i_term_next < i_term_prev) {
-        float i_term_limit = pid_clamp_symmetric(pid->min_out - base_output,
-                                                  pid->max_iout);
+    }
+    else if (output_raw < pid->min_out && i_term_next < i_term_prev)
+    {
+        float i_term_limit = pid_clamp_symmetric(pid->min_out - base_output, pid->max_iout);
         i_term_next = i_term_limit < i_term_prev ? i_term_limit : i_term_prev;
         integral_next = i_term_next / pid->ki;
         output_raw = base_output + i_term_next;
@@ -66,14 +68,14 @@ static float pid_apply(lib_pid_t *pid, float error, float p_term,
     return pid->out;
 }
 
-static float pid_standard_calc(lib_pid_t *pid, float target, float measure,
-                               float ff_g, float ff_y, float dt)
+static float pid_standard_calc(lib_pid_t *pid, float target, float measure, float ff_g, float ff_y,
+                               float dt)
 {
     float error = target - measure;
     float p_term = pid->kp * error;
     float d_term = pid->kd * (error - pid->err) / dt;
-    float ff_term = pid_clamp_symmetric(ff_g * pid->kff_g, pid->max_ff_g)
-                  + pid_clamp_symmetric(ff_y * pid->kff_y, pid->max_ff_y);
+    float ff_term = pid_clamp_symmetric(ff_g * pid->kff_g, pid->max_ff_g) +
+                    pid_clamp_symmetric(ff_y * pid->kff_y, pid->max_ff_y);
 
     pid_update_error(pid, error);
     return pid_apply(pid, error, p_term, d_term, ff_term, dt);
@@ -81,7 +83,10 @@ static float pid_standard_calc(lib_pid_t *pid, float target, float measure,
 
 void lib_pid_reset(lib_pid_t *pid)
 {
-    if (!pid) return;
+    if (!pid)
+    {
+        return;
+    }
     pid->integral = 0.0f;
     pid->err = 0.0f;
     pid->last_err = 0.0f;
@@ -92,17 +97,17 @@ void lib_pid_reset(lib_pid_t *pid)
     pid->speed_lpf.initialized = 0U;
 }
 
-void lib_pid_init(lib_pid_t *p, float kp, float ki, float kd,
-                  float kff_g, float kff_y,
-                  float max_ff_g, float max_ff_y,
-                  float min_out, float max_out, float max_iout)
+void lib_pid_init(lib_pid_t *p, float kp, float ki, float kd, float kff_g, float kff_y,
+                  float max_ff_g, float max_ff_y, float min_out, float max_out, float max_iout)
 {
     float swap;
 
-    if (!p) {
+    if (!p)
+    {
         return;
     }
-    if (min_out > max_out) {
+    if (min_out > max_out)
+    {
         swap = min_out;
         min_out = max_out;
         max_out = swap;
@@ -126,54 +131,60 @@ void lib_pid_init(lib_pid_t *p, float kp, float ki, float kd,
 
 float lib_pid_calc(lib_pid_t *pid, float target, float measure, float dt)
 {
-    if (!pid) {
+    if (!pid)
+    {
         return 0.0f;
     }
-    if (!(dt > 0.0f)) {
+    if (!(dt > 0.0f))
+    {
         return pid->out;
     }
     return pid_standard_calc(pid, target, measure, 0.0f, 0.0f, dt);
 }
 
-float lib_pid_ff_calc(lib_pid_t *pid, float target, float measure,
-                      float ff_g, float ff_y, float dt)
+float lib_pid_ff_calc(lib_pid_t *pid, float target, float measure, float ff_g, float ff_y, float dt)
 {
-    if (!pid) {
+    if (!pid)
+    {
         return 0.0f;
     }
-    if (!(dt > 0.0f)) {
+    if (!(dt > 0.0f))
+    {
         return pid->out;
     }
     return pid_standard_calc(pid, target, measure, ff_g, ff_y, dt);
 }
 
-float lib_pid_pos_calc(lib_pid_t *pid, float target, float measure,
-                       float ff_g, float ff_y, float speed, float dt)
+float lib_pid_pos_calc(lib_pid_t *pid, float target, float measure, float ff_g, float ff_y,
+                       float speed, float dt)
 {
     float error;
     float p_term;
     float d_term;
     float ff_term;
 
-    if (!pid) {
+    if (!pid)
+    {
         return 0.0f;
     }
-    if (!(dt > 0.0f)) {
+    if (!(dt > 0.0f))
+    {
         return pid->out;
     }
 
     error = target - measure;
     p_term = pid->kp * error;
     d_term = -pid->kd * lib_lpf_update(&pid->speed_lpf, speed, dt);
-    ff_term = pid_clamp_symmetric(ff_g * pid->kff_g, pid->max_ff_g)
-            + pid_clamp_symmetric(ff_y * pid->kff_y, pid->max_ff_y);
+    ff_term = pid_clamp_symmetric(ff_g * pid->kff_g, pid->max_ff_g) +
+              pid_clamp_symmetric(ff_y * pid->kff_y, pid->max_ff_y);
     pid_update_error(pid, error);
     return pid_apply(pid, error, p_term, d_term, ff_term, dt);
 }
 
 void lib_pid_set_2dof_weight(lib_pid_t *pid, float weight_p, float weight_d)
 {
-    if (!pid) {
+    if (!pid)
+    {
         return;
     }
     pid->weight_p = lib_clamp(weight_p, 0.0f, 1.0f);
@@ -187,10 +198,12 @@ float lib_pid_2dof_calc(lib_pid_t *pid, float target, float measure, float dt)
     float d_input;
     float d_term;
 
-    if (!pid) {
+    if (!pid)
+    {
         return 0.0f;
     }
-    if (!(dt > 0.0f)) {
+    if (!(dt > 0.0f))
+    {
         return pid->out;
     }
 
@@ -209,10 +222,12 @@ float lib_pid_deriv_first_calc(lib_pid_t *pid, float target, float measure, floa
     float p_term;
     float d_term;
 
-    if (!pid) {
+    if (!pid)
+    {
         return 0.0f;
     }
-    if (!(dt > 0.0f)) {
+    if (!(dt > 0.0f))
+    {
         return pid->out;
     }
 
@@ -226,37 +241,36 @@ float lib_pid_deriv_first_calc(lib_pid_t *pid, float target, float measure, floa
 
 /* ─── 模糊 PID 默认规则 ─── */
 static const int8_t s_fuzzy_rule_kp[LIB_PID_FUZZY_LEVELS][LIB_PID_FUZZY_LEVELS] = {
-    { 6, 6, 5, 5, 4, 3, 3 }, { 6, 6, 5, 4, 4, 3, 1 },
-    { 5, 5, 5, 4, 3, 1, 1 }, { 5, 5, 4, 3, 1, 0, 0 },
-    { 4, 4, 3, 1, 1, 0, 0 }, { 4, 3, 1, 0, 0, 0, 0 },
-    { 3, 3, 1, 0, 0, 0, 0 },
+    {6, 6, 5, 5, 4, 3, 3}, {6, 6, 5, 4, 4, 3, 1}, {5, 5, 5, 4, 3, 1, 1}, {5, 5, 4, 3, 1, 0, 0},
+    {4, 4, 3, 1, 1, 0, 0}, {4, 3, 1, 0, 0, 0, 0}, {3, 3, 1, 0, 0, 0, 0},
 };
 
 static const int8_t s_fuzzy_rule_ki[LIB_PID_FUZZY_LEVELS][LIB_PID_FUZZY_LEVELS] = {
-    { 0, 0, 1, 1, 2, 3, 3 }, { 0, 0, 1, 2, 2, 3, 3 },
-    { 0, 1, 2, 2, 3, 4, 4 }, { 1, 1, 2, 3, 4, 5, 5 },
-    { 2, 2, 3, 4, 4, 5, 6 }, { 3, 3, 4, 4, 5, 6, 6 },
-    { 3, 3, 4, 5, 5, 6, 6 },
+    {0, 0, 1, 1, 2, 3, 3}, {0, 0, 1, 2, 2, 3, 3}, {0, 1, 2, 2, 3, 4, 4}, {1, 1, 2, 3, 4, 5, 5},
+    {2, 2, 3, 4, 4, 5, 6}, {3, 3, 4, 4, 5, 6, 6}, {3, 3, 4, 5, 5, 6, 6},
 };
 
 static const int8_t s_fuzzy_rule_kd[LIB_PID_FUZZY_LEVELS][LIB_PID_FUZZY_LEVELS] = {
-    { 4, 1, 0, 0, 0, 1, 4 }, { 4, 1, 0, 1, 1, 2, 3 },
-    { 3, 1, 1, 1, 2, 2, 3 }, { 3, 2, 2, 2, 2, 2, 3 },
-    { 3, 3, 3, 3, 3, 3, 3 }, { 6, 1, 4, 4, 4, 4, 6 },
-    { 6, 5, 5, 5, 4, 4, 6 },
+    {4, 1, 0, 0, 0, 1, 4}, {4, 1, 0, 1, 1, 2, 3}, {3, 1, 1, 1, 2, 2, 3}, {3, 2, 2, 2, 2, 2, 3},
+    {3, 3, 3, 3, 3, 3, 3}, {6, 1, 4, 4, 4, 4, 6}, {6, 5, 5, 5, 4, 4, 6},
 };
 
 /* ─── 模糊量化 ─── */
 static int8_t fuzzy_quantize(float val, float gain)
 {
     float q = val * gain;
-    if (q > 6.0f) q = 6.0f;
-    if (q < -6.0f) q = -6.0f;
+    if (q > 6.0f)
+    {
+        q = 6.0f;
+    }
+    if (q < -6.0f)
+    {
+        q = -6.0f;
+    }
     return (int8_t)((q + 6.0f) / 2.0f);
 }
 
-static float fuzzy_apply(lib_pid_fuzzy_t *fpid, float error,
-                         float p_term, float d_term, float dt)
+static float fuzzy_apply(lib_pid_fuzzy_t *fpid, float error, float p_term, float d_term, float dt)
 {
     float base_output = p_term + d_term;
     float integral_prev;
@@ -265,30 +279,30 @@ static float fuzzy_apply(lib_pid_fuzzy_t *fpid, float error,
     float i_term_next;
     float output_raw;
 
-    if (fpid->ki_cur == 0.0f) {
+    if (fpid->ki_cur == 0.0f)
+    {
         fpid->integral = 0.0f;
         fpid->out = lib_clamp(base_output, fpid->min_out, fpid->max_out);
         return fpid->out;
     }
 
-    i_term_prev = pid_clamp_symmetric(fpid->ki_cur * fpid->integral,
-                                      fpid->max_iout);
+    i_term_prev = pid_clamp_symmetric(fpid->ki_cur * fpid->integral, fpid->max_iout);
     integral_prev = i_term_prev / fpid->ki_cur;
     integral_next = integral_prev + error * dt;
-    i_term_next = pid_clamp_symmetric(fpid->ki_cur * integral_next,
-                                      fpid->max_iout);
+    i_term_next = pid_clamp_symmetric(fpid->ki_cur * integral_next, fpid->max_iout);
     integral_next = i_term_next / fpid->ki_cur;
     output_raw = base_output + i_term_next;
 
-    if (output_raw > fpid->max_out && i_term_next > i_term_prev) {
-        float i_term_limit = pid_clamp_symmetric(fpid->max_out - base_output,
-                                                  fpid->max_iout);
+    if (output_raw > fpid->max_out && i_term_next > i_term_prev)
+    {
+        float i_term_limit = pid_clamp_symmetric(fpid->max_out - base_output, fpid->max_iout);
         i_term_next = i_term_limit > i_term_prev ? i_term_limit : i_term_prev;
         integral_next = i_term_next / fpid->ki_cur;
         output_raw = base_output + i_term_next;
-    } else if (output_raw < fpid->min_out && i_term_next < i_term_prev) {
-        float i_term_limit = pid_clamp_symmetric(fpid->min_out - base_output,
-                                                  fpid->max_iout);
+    }
+    else if (output_raw < fpid->min_out && i_term_next < i_term_prev)
+    {
+        float i_term_limit = pid_clamp_symmetric(fpid->min_out - base_output, fpid->max_iout);
         i_term_next = i_term_limit < i_term_prev ? i_term_limit : i_term_prev;
         integral_next = i_term_next / fpid->ki_cur;
         output_raw = base_output + i_term_next;
@@ -300,15 +314,17 @@ static float fuzzy_apply(lib_pid_fuzzy_t *fpid, float error,
 }
 
 /* ─── 模糊 PID 初始化 ─── */
-void lib_pid_fuzzy_init(lib_pid_fuzzy_t *fpid, float kp, float ki, float kd,
-                        float min_out, float max_out, float max_iout)
+void lib_pid_fuzzy_init(lib_pid_fuzzy_t *fpid, float kp, float ki, float kd, float min_out,
+                        float max_out, float max_iout)
 {
     float swap;
 
-    if (!fpid) {
+    if (!fpid)
+    {
         return;
     }
-    if (min_out > max_out) {
+    if (min_out > max_out)
+    {
         swap = min_out;
         min_out = max_out;
         max_out = swap;
@@ -327,10 +343,11 @@ void lib_pid_fuzzy_init(lib_pid_fuzzy_t *fpid, float kp, float ki, float kd,
     lib_pid_fuzzy_load_default_rules(fpid);
 }
 
-void lib_pid_fuzzy_cfg(lib_pid_fuzzy_t *fpid, float ke, float kec,
-                       float kp_delta, float ki_delta, float kd_delta)
+void lib_pid_fuzzy_cfg(lib_pid_fuzzy_t *fpid, float ke, float kec, float kp_delta, float ki_delta,
+                       float kd_delta)
 {
-    if (!fpid) {
+    if (!fpid)
+    {
         return;
     }
     fpid->ke = ke;
@@ -342,7 +359,8 @@ void lib_pid_fuzzy_cfg(lib_pid_fuzzy_t *fpid, float ke, float kec,
 
 void lib_pid_fuzzy_load_default_rules(lib_pid_fuzzy_t *fpid)
 {
-    if (!fpid) {
+    if (!fpid)
+    {
         return;
     }
     fpid->rule_kp = s_fuzzy_rule_kp;
@@ -362,10 +380,12 @@ float lib_pid_fuzzy_calc(lib_pid_fuzzy_t *fpid, float target, float measure, flo
     float p_term;
     float d_term;
 
-    if (!fpid) {
+    if (!fpid)
+    {
         return 0.0f;
     }
-    if (!(dt > 0.0f) || !fpid->rule_kp || !fpid->rule_ki || !fpid->rule_kd) {
+    if (!(dt > 0.0f) || !fpid->rule_kp || !fpid->rule_ki || !fpid->rule_kd)
+    {
         return fpid->out;
     }
 
@@ -374,10 +394,22 @@ float lib_pid_fuzzy_calc(lib_pid_fuzzy_t *fpid, float target, float measure, flo
     e_idx = fuzzy_quantize(error, fpid->ke);
     ec_idx = fuzzy_quantize(ec, fpid->kec);
 
-    if (e_idx < 0) e_idx = 0;
-    if (e_idx >= LIB_PID_FUZZY_LEVELS) e_idx = LIB_PID_FUZZY_LEVELS - 1;
-    if (ec_idx < 0) ec_idx = 0;
-    if (ec_idx >= LIB_PID_FUZZY_LEVELS) ec_idx = LIB_PID_FUZZY_LEVELS - 1;
+    if (e_idx < 0)
+    {
+        e_idx = 0;
+    }
+    if (e_idx >= LIB_PID_FUZZY_LEVELS)
+    {
+        e_idx = LIB_PID_FUZZY_LEVELS - 1;
+    }
+    if (ec_idx < 0)
+    {
+        ec_idx = 0;
+    }
+    if (ec_idx >= LIB_PID_FUZZY_LEVELS)
+    {
+        ec_idx = LIB_PID_FUZZY_LEVELS - 1;
+    }
 
     dkp = fpid->rule_kp[e_idx][ec_idx] - 3;
     dki = fpid->rule_ki[e_idx][ec_idx] - 3;

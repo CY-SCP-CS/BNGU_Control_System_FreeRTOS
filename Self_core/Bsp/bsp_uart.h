@@ -7,8 +7,8 @@
 
 #include "bsp_cfg.h"
 
-#define BSP_UART_TX_CALLBACK_MAX       3U
-#define BSP_UART_RX_IDLE_CALLBACK_MAX  3U
+#define BSP_UART_TX_CALLBACK_MAX 3U
+#define BSP_UART_RX_IDLE_CALLBACK_MAX 3U
 
 /** @brief UART 发送完成回调类型。 */
 typedef void (*bsp_uart_tx_cplt_callback_t)(UART_HandleTypeDef *huart);
@@ -22,6 +22,7 @@ typedef void (*bsp_uart_rx_idle_callback_t)(UART_HandleTypeDef *huart);
  * @param  data  发送缓冲区。
  * @param  len   发送字节数。
  * @return HAL 库执行状态。
+ * @note   HAL_OK 仅表示已启动；缓冲必须保持有效且不改写，直到发送完成或确认中止。
  */
 HAL_StatusTypeDef bsp_uart_tx(UART_HandleTypeDef *huart, uint8_t *data, uint16_t len);
 
@@ -30,8 +31,7 @@ HAL_StatusTypeDef bsp_uart_tx(UART_HandleTypeDef *huart, uint8_t *data, uint16_t
  * @param  huart    UART 句柄。
  * @param  callback 发送完成后调用的函数。
  */
-void bsp_uart_reg_tx_cplt_callback(UART_HandleTypeDef *huart,
-                                   bsp_uart_tx_cplt_callback_t callback);
+void bsp_uart_reg_tx_cplt_callback(UART_HandleTypeDef *huart, bsp_uart_tx_cplt_callback_t callback);
 
 /**
  * @brief  启动 DMA 接收。
@@ -39,6 +39,7 @@ void bsp_uart_reg_tx_cplt_callback(UART_HandleTypeDef *huart,
  * @param  data  接收缓冲区。
  * @param  len   接收缓冲区长度，单位字节。
  * @return HAL 库执行状态。
+ * @note   DMA 模式沿用外设配置，接收缓冲须有静态生命周期且位于 DMA 可访问的 SRAM。
  */
 HAL_StatusTypeDef bsp_uart_rx_dma(UART_HandleTypeDef *huart, uint8_t *data, uint16_t len);
 
@@ -87,12 +88,36 @@ void bsp_uart_irq_handler(UART_HandleTypeDef *huart);
  * @param  huart    UART 句柄。
  * @param  callback 空闲中断发生后调用的函数。
  */
-void bsp_uart_reg_rx_idle_callback(UART_HandleTypeDef *huart,
-                                   bsp_uart_rx_idle_callback_t callback);
+void bsp_uart_reg_rx_idle_callback(UART_HandleTypeDef *huart, bsp_uart_rx_idle_callback_t callback);
 
+/** @brief 接收事件编号，属于枚举值，不能按标志位组合。 */
+enum
+{
+    BSP_UART_RX_HALF = 1, /**< DMA 半缓冲接收完成 HT。 */
+    BSP_UART_RX_FULL = 2, /**< DMA 全缓冲接收完成 TC；循环模式随后继续覆盖缓冲。 */
+    BSP_UART_RX_IDLE = 3, /**< UART 检测到一段线路空闲，不保证等于一帧协议。 */
+    BSP_UART_ERROR = 4    /**< HAL 报告 UART 接收/传输错误。 */
+};
 
-enum { BSP_UART_RX_HALF=1, BSP_UART_RX_FULL=2, BSP_UART_RX_IDLE=3, BSP_UART_ERROR=4 };
+/**
+ * @brief  UART 统一事件回调类型。
+ * @note   参数依次为 UART 句柄和一个 BSP_UART_* 事件编号；在 UART 或 DMA ISR 中调用。
+ * @note   回调可读取 NDTR 并复制数据，但不要阻塞、取互斥量或执行协议业务。
+ */
 typedef void (*bsp_uart_rx_event_callback_t)(UART_HandleTypeDef *, uint32_t event);
+/**
+ * @brief  分发 UART IDLE 事件，并清除硬件空闲标志。
+ * @param  huart        发生 UART 中断的句柄，NULL 时忽略。
+ * @note   由 USARTx_IRQHandler 在 HAL_UART_IRQHandler() 前调用；本函数不代替 HAL 处理其他中断。
+ * @note   先调用兼容 IDLE 回调，再清除 IDLE，最后通知统一事件回调；未发现 IDLE 时不交付事件。
+ */
 void bsp_uart_rx_irq_dispatch(UART_HandleTypeDef *);
+/**
+ * @brief  为指定 UART 注册 HT/TC/IDLE/ERROR 统一回调。
+ * @param  uart         目标 UART 句柄，必须有效。
+ * @param  callback     同步事件回调，NULL 表示该槽不交付事件。
+ * @note   最多保存三个 UART；同一 UART 再注册覆盖旧回调，表满时静默忽略。
+ * @note   须在接收启动前注册；当前分别供 UART1 日志、USART3 DBUS 和 USART6 裁判使用。
+ */
 void bsp_uart_reg_rx_event_callback(UART_HandleTypeDef *, bsp_uart_rx_event_callback_t);
 #endif

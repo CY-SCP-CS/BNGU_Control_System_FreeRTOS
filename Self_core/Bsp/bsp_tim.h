@@ -30,8 +30,7 @@ void bsp_tim_pwm_stop(TIM_HandleTypeDef *htim, uint32_t channel);
  * @param  channel  PWM 通道。
  * @param  freq_hz  目标频率，单位 Hz。
  */
-void bsp_tim_pwm_set_freq(TIM_HandleTypeDef *htim, uint32_t channel,
-                          uint32_t freq_hz);
+void bsp_tim_pwm_set_freq(TIM_HandleTypeDef *htim, uint32_t channel, uint32_t freq_hz);
 
 /**
  * @brief  设置 PWM 比较值。
@@ -39,8 +38,7 @@ void bsp_tim_pwm_set_freq(TIM_HandleTypeDef *htim, uint32_t channel,
  * @param  channel  PWM 通道。
  * @param  compare  比较值，范围为 0 到 ARR。
  */
-void bsp_tim_pwm_set_compare(TIM_HandleTypeDef *htim, uint32_t channel,
-                             uint32_t compare);
+void bsp_tim_pwm_set_compare(TIM_HandleTypeDef *htim, uint32_t channel, uint32_t compare);
 
 /**
  * @brief  启动基础定时器更新中断。
@@ -60,8 +58,7 @@ void bsp_tim_it_stop(TIM_HandleTypeDef *htim);
  * @param  callback  更新中断发生时调用的函数。
  * @note   当前 BSP 只保存一个定时器回调。
  */
-void bsp_tim_reg_callback(TIM_HandleTypeDef *htim,
-                          bsp_tim_period_callback_t callback);
+void bsp_tim_reg_callback(TIM_HandleTypeDef *htim, bsp_tim_period_callback_t callback);
 
 /**
  * @brief  获取 HAL 系统节拍。

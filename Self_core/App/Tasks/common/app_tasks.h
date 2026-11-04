@@ -6,18 +6,13 @@
 #define APP_TASKS_H
 #include "app_rtos_types.h"
 
-/* 任务入口在各任务自己的 app_task_<任务>.h 声明。 */
-/* 句柄在 app_rtos.c 中定义，由统一创建流程写入。 */
-extern osThreadId_t ctrl_chas_TaskHandle;
-extern osThreadId_t ctrl_gim_TaskHandle;
-extern osThreadId_t ctrl_shoot_TaskHandle;
-extern osThreadId_t comm_can_TaskHandle;
-extern osThreadId_t comm_dbus_TaskHandle;
-extern osThreadId_t comm_ref_TaskHandle;
-extern osThreadId_t comm_imu_TaskHandle;
-extern osThreadId_t sys_init_TaskHandle;
-extern osThreadId_t sys_health_TaskHandle;
-extern osThreadId_t sys_log_TaskHandle;
+/* 任务入口在各任务自己的 app_task_<任务>.h 声明。
+ * 此处从统一清单声明句柄；变量在 app_rtos.c 中由同一清单定义。
+ */
+#define APP_TASK(task_id, task_handle, task_entry, ...) \
+    extern osThreadId_t task_handle;
+#include "app_task_list.def"
+#undef APP_TASK
 
 /** @brief 等待任务表指定的首次启动阶段；失败后是否继续诊断也由表决定。 */
 void app_tasks_wait_start(unsigned task);

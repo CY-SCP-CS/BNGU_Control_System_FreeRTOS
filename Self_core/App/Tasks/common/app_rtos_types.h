@@ -15,23 +15,16 @@
 #define APP_RTOS_TF_TX_DONE (1UL << 5)          //线程标志：本机 UART 发送完成
 #define APP_RTOS_TF_IO_ERROR (1UL << 6)         //线程标志：UART1 发送错误
 
-/* 任务编号供创建、通知、日志和统计共用。
- * 已有数字保持不变；新增任务在 TASK_COUNT 前追加下一个连续编号，
- * 并在 app_rtos.c 的 app_rtos_task_table 中添加对应的配置。
+/* 从统一清单生成任务编号，供创建、通知、日志和统计共用。
+ * 编号按清单顺序从 0 递增；新任务追加到清单末尾，保持已有编号稳定。
+ * 此处只展开第一个参数，不依赖板型能力或入口函数声明。
  */
 enum
 {
-    TASK_CHAS = 0,   /* 底盘控制 */
-    TASK_GIM = 1,    /* 云台控制 */
-    TASK_SHOOT = 2,  /* 发射控制 */
-    TASK_CAN = 3,    /* CAN 通信 */
-    TASK_DBUS = 4,   /* 遥控接收 */
-    TASK_REF = 5,    /* 裁判通信 */
-    TASK_IMU = 6,    /* IMU 处理 */
-    TASK_INIT = 7,   /* 系统初始化 */
-    TASK_HEALTH = 8, /* 健康监测 */
-    TASK_LOG = 9,    /* 日志输出 */
-    TASK_COUNT       /* 任务总数：自动取上一项编号 + 1。 */
+#define APP_TASK(task_id, task_handle, task_entry, ...) task_id,
+#include "app_task_list.def"
+#undef APP_TASK
+    TASK_COUNT /* 清单中的任务总数，包含当前板未启用的任务。 */
 };
 
 /** @brief 创建、启动门控和诊断共用的任务元数据，栈单位为字节。 */

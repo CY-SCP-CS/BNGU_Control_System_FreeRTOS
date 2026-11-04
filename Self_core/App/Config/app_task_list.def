@@ -1,0 +1,140 @@
+/**
+ * @file    app_task_list.def
+ * @brief   应用任务清单：任务编号、句柄和创建属性的统一配置入口
+ * @note    本文件有意不使用头文件保护宏，供不同位置重复包含。
+ *          包含前定义 APP_TASK，包含后由调用方 #undef APP_TASK。
+ *          前三个参数依次为任务编号、句柄变量名、入口函数名；
+ *          后续参数使用 app_rtos_task_desc_t 的成员名填写创建与启动属性。
+ *          栈大小单位为字节，未填写的策略字段默认初始化为 0。
+ * @note    清单顺序决定任务编号。现有任务顺序保持固定，新任务追加到末尾，
+ *          不按板型裁剪清单；enabled 只决定当前板是否创建对应线程。
+ *          入口函数仍在各任务自己的头文件中声明，app_rtos.c 包含这些头文件。
+ *          队列、互斥量等通信对象由所属模块的 init/deinit 管理。
+ */
+
+#ifndef APP_TASK
+#error "Define APP_TASK before including app_task_list.def"
+#endif
+
+/* 底盘控制，TASK_CHAS = 0。 */
+APP_TASK(
+    TASK_CHAS,
+    ctrl_chas_TaskHandle,
+    Start_ctrl_chas_Task,
+    .name = "ctrl_chas_Task",
+    .stack = 1536,
+    .priority = osPriorityHigh,
+    .enabled = APP_BOARD_HAS_CHASSIS,
+    .start_flags = APP_RTOS_EVT_SYS_READY
+)
+
+/* 云台控制，TASK_GIM = 1。 */
+APP_TASK(
+    TASK_GIM,
+    ctrl_gim_TaskHandle,
+    Start_ctrl_gim_Task,
+    .name = "ctrl_gim_Task",
+    .stack = 1536,
+    .priority = osPriorityHigh,
+    .enabled = APP_BOARD_HAS_GIMBAL,
+    .start_flags = APP_RTOS_EVT_SYS_READY
+)
+
+/* 发射控制，TASK_SHOOT = 2。 */
+APP_TASK(
+    TASK_SHOOT,
+    ctrl_shoot_TaskHandle,
+    Start_ctrl_shoot_Task,
+    .name = "ctrl_shoot_Task",
+    .stack = 1024,
+    .priority = osPriorityAboveNormal3,
+    .enabled = APP_BOARD_HAS_SHOOT,
+    .start_flags = APP_RTOS_EVT_SYS_READY
+)
+
+/* CAN 通信，TASK_CAN = 3。 */
+APP_TASK(
+    TASK_CAN,
+    comm_can_TaskHandle,
+    Start_comm_can_Task,
+    .name = "comm_can_Task",
+    .stack = 1024,
+    .priority = osPriorityHigh1,
+    .enabled = APP_BOARD_HAS_CAN,
+    .start_flags = APP_RTOS_EVT_PORT_READY
+)
+
+/* 遥控接收，TASK_DBUS = 4。 */
+APP_TASK(
+    TASK_DBUS,
+    comm_dbus_TaskHandle,
+    Start_comm_dbus_Task,
+    .name = "comm_dbus_Task",
+    .stack = 1024,
+    .priority = osPriorityAboveNormal2,
+    .enabled = APP_BOARD_HAS_DBUS,
+    .start_flags = APP_RTOS_EVT_PORT_READY
+)
+
+/* 裁判通信，TASK_REF = 5。 */
+APP_TASK(
+    TASK_REF,
+    comm_ref_TaskHandle,
+    Start_comm_ref_Task,
+    .name = "comm_ref_Task",
+    .stack = 1024,
+    .priority = osPriorityAboveNormal1,
+    .enabled = APP_BOARD_HAS_REFEREE,
+    .start_flags = APP_RTOS_EVT_PORT_READY
+)
+
+/* IMU 处理，TASK_IMU = 6。 */
+APP_TASK(
+    TASK_IMU,
+    comm_imu_TaskHandle,
+    Start_comm_imu_Task,
+    .name = "comm_imu_Task",
+    .stack = 1536,
+    .priority = osPriorityHigh2,
+    .enabled = APP_BOARD_HAS_IMU,
+    .start_flags = APP_RTOS_EVT_SYS_READY
+)
+
+/* 系统初始化，TASK_INIT = 7；不等待启动事件，完成后退出。 */
+APP_TASK(
+    TASK_INIT,
+    sys_init_TaskHandle,
+    Start_sys_init_Task,
+    .name = "sys_init_Task",
+    .stack = 1024,
+    .priority = osPriorityHigh3,
+    .enabled = (APP_BOARD_ALL_MASK & APP_BOARD_CURRENT_MASK) != 0,
+    .start_flags = 0,
+    .one_shot = true
+)
+
+/* 健康监测，TASK_HEALTH = 8；初始化失败后继续诊断。 */
+APP_TASK(
+    TASK_HEALTH,
+    sys_health_TaskHandle,
+    Start_sys_health_Task,
+    .name = "sys_health_Task",
+    .stack = 768,
+    .priority = osPriorityBelowNormal,
+    .enabled = (APP_BOARD_ALL_MASK & APP_BOARD_CURRENT_MASK) != 0,
+    .start_flags = APP_RTOS_EVT_PORT_READY,
+    .diagnostic_on_failure = true
+)
+
+/* 日志输出，TASK_LOG = 9；初始化失败后继续诊断。 */
+APP_TASK(
+    TASK_LOG,
+    sys_log_TaskHandle,
+    Start_sys_log_Task,
+    .name = "sys_log_Task",
+    .stack = 1024,
+    .priority = osPriorityLow,
+    .enabled = (APP_BOARD_ALL_MASK & APP_BOARD_CURRENT_MASK) != 0,
+    .start_flags = APP_RTOS_EVT_PORT_READY,
+    .diagnostic_on_failure = true
+)

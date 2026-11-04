@@ -1,44 +1,44 @@
 # 哨兵工程 FreeRTOS 架构学习与开发指南
 
-> 面向读者：会写 STM32 裸机程序，了解任务和延时，但还不熟悉 RTOS 的并发、通信和 DMA 接收。
+> 面向读者：会写 STM32 裸机程序，了解任务和延时，希望掌握 RTOS 并发、任务通信、DMA 接收及工程开发。
 >
-> 对照工程：`D:/STM32project/BNGU_Control_System_FreeRTOS`。本文已同步 **2026-10-19 解耦与创建/通知简化后的源码**，保留原任务、入口和通信对象名称。文中的“建议”与“教学示例”不代表已经修改源码；代码片段未另行说明时用于解释机制，不是让你复制出第二套任务。
+> 对应工程：`D:/STM32project/BNGU_Control_System_FreeRTOS`。
 >
-> 当前基础：STM32F407、FreeRTOS V10.3.1、CMSIS-RTOS2 适配层、1 kHz 内核 tick、哨兵车型。本文是源码教学文档，不是新一次构建或上板验收记录。
+> 运行环境：STM32F407、FreeRTOS V10.3.1、CMSIS-RTOS2 适配层、1 kHz 内核 tick、哨兵车型。
+>
+> 本文按当前源码解释架构、接口和使用步骤。示例用于说明调用规则；实际入口、数据类型和配置以配套源码为准。文中相对于 `Self_core/` 的路径均省略该目录前缀，`Core/`、`Middlewares/`、`tools/` 和根构建文件除外。
 
 ## 阅读路线与目录
 
-第一次阅读建议按照 **1 → 2 → 3 → 4 → 5 → 7 → 9 → 12** 的顺序。先看清“谁做什么、数据归谁、何时运行”，再学习实现细节。开发时可以直接查询第 20、22、23、25 节。**了解本次解耦改动和以后改哪里，先读第 25 节。**
+第一次阅读按 **1 → 2 → 3 → 4 → 5 → 7 → 9 → 12**：先理解任务如何运行、数据归谁、各层负责什么，再看通信和接收实现。开发时查第 19～23 节；在 Keil 中观察运行状态时查第 25 节。
 
 | 章节 | 解决的问题 |
 |---|---|
 | [1. RTOS 的运行方式](#s01) | 任务是不是函数？优先级能否保证固定执行顺序？ |
-| [2. 层级与命名](#s02) | App、Os、Bsp、Drv、Lib、CMSIS、HAL 怎么区分？ |
-| [3. 文件与调用关系](#s03) | 从 main 到控制输出经过哪些文件？ |
+| [2. 层级与职责](#s02) | App、Os、Bsp、Drv、Lib 怎样分工和适配平台？ |
+| [3. 目录与调用关系](#s03) | 文件在哪里？从 main 到控制输出经过哪些文件？ |
 | [4. 十个任务](#s04) | 每个任务做什么，为什么这样拆？ |
-| [5. 初始化](#s05) | 为什么先创建对象，后启动接收，还要分两种 READY？ |
+| [5. 初始化](#s05) | 对象创建、端口就绪、系统就绪如何衔接？ |
 | [6. 周期与时间](#s06) | osDelayUntil、漏周期、回绕、硬件定时器怎么用？ |
-| [7. 全部通信关系](#s07) | 每条数据流使用什么对象？ |
+| [7. 全部通信关系](#s07) | 每条数据流使用什么对象，谁负责对象的生命周期？ |
 | [8. 队列与值传递](#s08) | 传结构体还是指针？容量如何确定？ |
-| [9. 快照与互斥量](#s09) | 如何同时读写完整状态？读不到怎么办？ |
+| [9. 快照与互斥量](#s09) | 如何读到完整状态？读不到怎么办？ |
 | [10. 标志与信号量](#s10) | 线程标志、任务通知、事件组、信号量有什么区别？ |
 | [11. 中断、回调与 Hook](#s11) | 谁调用谁？哪些接口能在中断里用？ |
 | [12. 裁判接收全过程](#s12) | DMA 环形缓冲、软件 FIFO、解析缓存逐步解释 |
-| [13. DBUS 双缓冲](#s13) | 为什么与裁判使用不同接收方式？ |
+| [13. DBUS 双缓冲](#s13) | 固定帧接收为什么使用两块缓冲？ |
 | [14. IMU 状态机](#s14) | 硬件节拍、SPI DMA、任务解算如何衔接？ |
 | [15. CAN 收发](#s15) | 六个队列、待发槽和处理预算分别做什么？ |
-| [16. 日志与串口所有权](#s16) | 为什么不能所有任务都直接 printf？ |
+| [16. 日志与串口所有权](#s16) | 日志怎样发送，异步发送缓冲何时可以复用？ |
 | [17. 内存、栈、堆与内存池](#s17) | 日志里的空闲内存究竟指什么？ |
 | [18. 健康监测与测时](#s18) | 在线、心跳、运行耗时有哪些实际含义？ |
-| [19. 配置与 CubeMX](#s19) | 哪些由 CubeMX 管，哪些在工程里改？ |
-| [20. 日常开发操作](#s20) | 加业务、任务、快照、中断和协议的具体步骤 |
-| [21. 前缀调整建议](#s21) | app_rtos 是否改成 os？如何有序调整？ |
+| [19. 配置与 CubeMX](#s19) | 哪些由 CubeMX 管，构建和板型怎样选择？ |
+| [20. 开发步骤与文件入口](#s20) | 编写业务、任务、快照、中断和协议的具体步骤 |
+| [21. 命名与接口约定](#s21) | 项目函数、CMSIS API 和 HAL API 怎样区分？ |
 | [22. 排查问题](#s22) | 常见现象首先检查哪里？ |
 | [23. 函数/API/配置索引](#s23) | 阅读源码时查函数职责与使用约束 |
-| [24. 官方资料](#s24) | 哪些资料与当前本地实现一起看？ |
-| [25. 解耦后的开发边界](#s25) | 私有通信、直接模块初始化、持久启动事件与构建怎样配合？ |
-| [26. 整理后的文件位置与开发入口](#s26) | 十个任务移到哪里？App 与 Os 如何分工？以后具体改哪个文件？ |
-| [27. Self_core 冗余检查](#s27) | 哪些别名和转发已简化？哪些短接口、备用能力需要保留？ |
+| [24. 源码与官方资料](#s24) | 哪些资料适合配合本地实现阅读？ |
+| [25. Keil 调试与运行观察](#s25) | Watch 看什么，怎样解读快照、计数和运行状态？ |
 
 <a id="s01"></a>
 ## 1. 先建立正确的 RTOS 运行方式
@@ -48,7 +48,8 @@
 裸机常见写法：
 
 ```c
-for (;;) {
+for (;;)
+{
     read_remote();
     update_imu();
     control_gimbal();
@@ -127,7 +128,7 @@ stateDiagram-v2
 | `Bsp` | HAL 外设操作、回调分发 | CAN/UART/SPI/TIM 等 |
 | `Lib` | 通用 PID、滤波、数学和时间计算 | 不包含 App、Os、HAL |
 
-Os 不再包含任何具体任务、板型、CAN 业务协议或 App/Drv/Bsp 头文件。它的 STM32 CPU 实现仍需要 CMSIS 设备头，FreeRTOS 专用实现仍需要当前内核；这两部分的硬件/内核依赖都是明确的。
+Os 提供通用机制，接口不依赖具体任务、板型或 CAN 业务协议。CPU 端口使用 CMSIS 设备头访问 DWT、PRIMASK 等寄存器；FreeRTOS 内核适配使用当前内核的堆统计和 Hook。应用决定机制用于什么业务。
 
 ### 2.2 用一次控制过程判断代码放哪里
 
@@ -143,27 +144,86 @@ CAN 中断取帧（Bsp）
   → 协议编码、待发管理、提交邮箱
 ```
 
-改 PID 不需要改 Os；改 CAN ID 在协议层处理；改 UART 发送实现进入日志端口；新增任务需要应用配置和装配，不再需要 Os 模块注册。
+PID 和控制策略由 App 管理，CAN ID 和线协议由协议模块管理，UART 发送由日志端口管理。任务的配置和装配集中在 App/Tasks，Os 提供这些任务共同使用的通用机制。
 
 ### 2.3 名字与系统 API
 
-`osThreadNew/osMessageQueuePut/osDelayUntil` 是 CMSIS-RTOS2 接口。`HAL_*` 属于 STM32 HAL。`app_rtos_*` 是项目已有命名，保留名称并不代表这些函数都放在 Os；以目录和职责判断所属层。
+`osThreadNew()`、`osMessageQueuePut()`、`osDelayUntil()` 是 CMSIS-RTOS2 接口。`HAL_*` 属于 STM32 HAL。`app_rtos_*` 是项目函数前缀，具体所属层由声明头、目录和职责确定；第 21 节给出命名速查。
 
-任务层可以直接使用 CMSIS，不给每一个标准 API 再套转发函数。`app_rtos_object_mutex()` 保留，是因为它统一了优先级继承与创建规则；`app_rtos_notify_task()` 保留，是因为它检查任务编号、句柄和通知错误。
+任务层直接使用 CMSIS API。项目公共函数承担共同规则：`app_rtos_object_mutex()` 统一优先级继承与创建规则，`app_rtos_notify_task()` 检查任务编号、句柄和通知错误，`app_tasks_period_wait()` 处理绝对节拍、漏周期和等待结果。
+
+### 2.4 更换平台时的适配边界
+
+| 变化 | 需要适配的位置 | 通过什么接口连接 |
+|---|---|---|
+| STM32F407 换成其他 MCU | Core、Bsp、Drv 设备端口、CAN/log 任务端口、板级装配、Os CPU 端口 | 设备回调、任务端口接口、测时/临界区接口 |
+| FreeRTOS 换成其他内核 | CMSIS 后端、Os 内核统计与 Hook、tick 配置 | CMSIS-RTOS2 API、`app_rtos_memory_read()` 等机制接口 |
+| 更换 IMU 或串口设备 | 对应 Drv 和设备端口、板级装配 | 完整样本/解包结果以及有效性、时间戳 |
+| 调整控制策略 | App 的对应控制模块、领域输入输出类型、任务的数据组织 | 输入值副本、算法输出、结果提交接口 |
+
+纯 App 算法使用值类型、数学库和自身状态。App/Tasks 负责 RTOS 执行过程，因此依赖 CMSIS；Bsp 和各端口实现硬件访问。将代码移到另一平台时，按这些明确的接口提供对应实现。
 
 <a id="s03"></a>
 ## 3. 文件层级与调用关系
 
-### 3.1 建议阅读顺序
+### 3.1 目录与文件职责
+
+```text
+Self_core/
+  App/
+    Config/                     板型、周期、容量、模块阈值
+      app_task_list.def         统一任务清单：编号、句柄、创建与启动属性
+    common/
+      data/                     各领域值类型、快照、输入/输出、槽位
+      communication/            原始 CAN 帧、云台/底盘协议
+      system/                   业务初始化和控制输入处理
+    sentry/
+      app_sentry_can.c/.h        哨兵 CAN 协议编解码
+      gimbal/ chassis/ shoot/   纯控制算法
+    Tasks/
+      common/
+        app_rtos.c/.h           清单展开、对象装配、启动事件
+        app_rtos_types.h        从清单生成任务编号；统计、通知位
+        app_tasks.c/.h          应用等待与周期统计工具
+        app_task_monitor.c/.h   通用在线状态
+        app_task_telemetry.c/.h 控制状态与 VOFA 映射
+      init/
+        app_task_init.c/.h      初始化任务入口
+        app_rtos_board.c/.h     本板硬件及应用装配
+      can/
+        app_task_can.c/.h       CAN 工作循环和私有对象
+        app_task_can_port.c/.h  CAN 硬件接入
+      log/
+        app_task_log.c/.h       日志/内存报告/发送策略
+        app_task_log_port.c/.h  UART1 事务与完成/错误回调
+      gimbal/ chassis/ shoot/ dbus/ imu/ referee/ health/
+                                各任务自己的 .c/.h
+  Os/
+    FreeRTOS/
+      app_rtos_objects.c/.h     通用对象和快照复制
+      app_rtos_kernel.c/.h      堆统计及 FreeRTOS Hook
+    Port/
+      app_rtos_port.c           STM32 CPU 适配
+      app_rtos_time.h           测时/临界区契约
+  project_cfg.h                 车型、板型及日志模式的默认配置
+  Drv/                          协议/设备及设备端口
+  Bsp/                          HAL 外设接入
+  Lib/                          PID/滤波/数学
+```
+
+同一任务的入口、私有资源接口及配套硬件端口放在对应任务目录。`App/common/data` 按云台、底盘、IMU、裁判等领域定义值类型；任务之间传递这些值，不在业务数据中夹带 RTOS 句柄。
+
+### 3.2 源码阅读顺序
 
 1. `Self_core/project_cfg.h` 与 `App/Config/app_board_config.h`：车型和板型能力。
-2. `App/Tasks/common/app_rtos.c`：十个任务的配置及唯一创建入口。
-3. `App/Tasks/init/app_task_init.c`：调度器启动后的初始化顺序。
-4. `App/Tasks/init/app_rtos_board.c`：本板硬件装配。
-5. `App/Tasks/common/app_tasks.c`：周期等待和统计。
-6. 对应任务的 `.c/.h`，再进入它调用的 App 算法或 Drv 解析器。
+2. `App/Config/app_task_list.def`：全部任务的编号、句柄、入口和属性。
+3. `App/Tasks/common/app_rtos.c`：清单生成的任务表及唯一创建入口。
+4. `App/Tasks/init/app_task_init.c`：调度器启动后的初始化顺序。
+5. `App/Tasks/init/app_rtos_board.c`：本板硬件装配。
+6. `App/Tasks/common/app_tasks.c`：周期等待和统计。
+7. 对应任务的 `.c/.h`，再进入它调用的 App 算法或 Drv 解析器。
 
-### 3.2 启动调用链
+### 3.3 启动调用链
 
 ```mermaid
 flowchart TD
@@ -181,9 +241,9 @@ flowchart TD
     READY --> EXIT[保存初始化栈水位/osThreadExit]
 ```
 
-### 3.3 句柄、extern 与 static
+### 3.4 句柄、extern 与 static
 
-任务句柄保持原名，定义在 `App/Tasks/common/app_rtos.c`，任务表引用这些变量的地址。通信对象句柄仍是所属模块 `.c` 内的 `static` 变量：CAN 六队列归 CAN，DBUS 队列和锁归 DBUS，其他模块同理。
+任务句柄由 `app_task_list.def` 在 `App/Tasks/common/app_rtos.c` 中展开定义，在 `app_tasks.h` 中展开 `extern` 声明。它们仍是普通的全局变量，任务表引用这些变量的地址，创建线程后向其中写入句柄。通信对象句柄是所属模块 `.c` 内的 `static` 变量：CAN 六队列归 CAN，DBUS 队列和锁归 DBUS，其他模块同理。
 
 外部使用 `app_rtos_dbus_read()`、`app_rtos_ctrl_send()` 等领域接口，不通过 `extern` 任意访问内部队列或锁。传给函数的指针只用于本次复制；队列实际保存值副本。
 
@@ -192,7 +252,7 @@ flowchart TD
 
 ### 4.1 任务表
 
-以下栈均为 `osThreadAttr_t.stack_size` 的**字节数**。优先级取自当前 `app_rtos_task_table`。
+以下栈均为 `osThreadAttr_t.stack_size` 的**字节数**。任务属性在 `App/Config/app_task_list.def` 中填写，由它生成当前 `app_rtos_task_table`。
 
 | 任务对象名 | 当前板型 | 优先级 | 栈/B | 运行方式 | 每轮主要工作 |
 |---|---|---|---:|---|---|
@@ -228,6 +288,75 @@ PID 积分、滤波历史、目标累计量等都属于可变状态。如果多�
 
 当前云台、底盘、发射分别拥有自己的算法状态。其他任务交付输入，控制任务产生输出。这样能明确“每个控制周期只更新一次”，也便于迁移和分析时序。
 
+### 4.4 统一任务清单怎么读
+
+`App/Config/app_task_list.def` 使用 C 预处理器的 X Macro 写法：同一份清单被不同文件包含，每次先定义不同的 `APP_TASK`，就能分别生成编号、声明、变量和表项。整个过程发生在编译前，不需要 YAML 解析器或额外的代码生成脚本。
+
+例如云台任务的完整配置是：
+
+```c
+APP_TASK(
+    TASK_GIM,
+    ctrl_gim_TaskHandle,
+    Start_ctrl_gim_Task,
+    .name = "ctrl_gim_Task",
+    .stack = 1536,
+    .priority = osPriorityHigh,
+    .enabled = APP_BOARD_HAS_GIMBAL,
+    .start_flags = APP_RTOS_EVT_SYS_READY
+)
+```
+
+前三项依次是任务编号名、句柄变量名、入口函数名。后面的 `.成员 = 值` 是 `app_rtos_task_desc_t` 的具名属性，顺序不影响含义。
+
+| 字段 | 含义 |
+|---|---|
+| `.name` | 调试器中显示的线程名称，与入口函数名分别填写 |
+| `.stack` | 线程栈大小，单位字节 |
+| `.priority` | CMSIS-RTOS2 优先级 |
+| `.enabled` | 当前板是否创建线程；为 0 时保留编号与空句柄 |
+| `.start_flags` | 首次等待 `PORT_READY`、`SYS_READY`，或 0 表示不等待 |
+| `.diagnostic_on_failure` | 初始化失败后是否仍执行诊断，未填写为 0 |
+| `.one_shot` | 一次性任务的生命周期标记，未填写为 0；任务仍须主动保存完成状态并 `osThreadExit()` |
+
+`handle` 和 `entry` 由前三个参数生成，不在后面的具名属性中重复填写。入口函数的声明仍放在所属任务 `.h`，由 `app_rtos.c` 包含；清单不替代函数实现或任务工作循环。
+
+### 4.5 一份清单怎样变成四处代码
+
+| 包含位置 | 本次 `APP_TASK` 做什么 | 生成的内容 |
+|---|---|---|
+| `app_rtos_types.h` | 只取第一个参数 | `TASK_CHAS` 到 `TASK_LOG` 的枚举，末尾自动得到 `TASK_COUNT` |
+| `app_tasks.h` | 只取句柄名并加 `extern` | `extern osThreadId_t ctrl_gim_TaskHandle;` 等声明 |
+| `app_rtos.c` 的句柄区 | 只取句柄名 | `osThreadId_t ctrl_gim_TaskHandle;` 等变量定义 |
+| `app_rtos.c` 的任务表区 | 组合编号、句柄地址、入口和具名属性 | `app_rtos_task_table[TASK_COUNT]` 的全部表项 |
+
+以生成编号为例，实际写法是：
+
+```c
+enum
+{
+#define APP_TASK(task_id, task_handle, task_entry, ...) task_id,
+#include "app_task_list.def"
+#undef APP_TASK
+    TASK_COUNT
+};
+```
+
+其中 `...` 接收后续属性，`__VA_ARGS__` 表示这些属性；生成编号时不使用它们。生成任务表时，宏将它们放进结构体初始化器。每次包含后立即 `#undef APP_TASK`，避免影响后面的代码。`.def` 有意没有头文件保护宏，否则只能生成第一处代码。
+
+现有编号按清单顺序保持为：`TASK_CHAS=0`、`TASK_GIM=1`、`TASK_SHOOT=2`、`TASK_CAN=3`、`TASK_DBUS=4`、`TASK_REF=5`、`TASK_IMU=6`、`TASK_INIT=7`、`TASK_HEALTH=8`、`TASK_LOG=9`。
+
+维护规则：
+
+- 新任务追加到清单末尾，保持已有编号稳定；不要按优先级重排。
+- 板型选择使用 `.enabled`，不要用 `#if` 删除清单项，否则两种板的编号可能不同。
+- 任务未启用仍需要入口声明和可编译实现；`.enabled` 控制创建，不负责裁剪源文件。
+- 修改栈、优先级、显示名称或启动条件，只改该任务的清单记录；周期仍在 `app_control_config.h` 或所属任务配置中维护。
+- 编号、句柄声明/定义和运行任务表均由清单生成，不手工再写一份。
+- 队列、锁和快照的生命周期在所属模块的 `init/deinit` 中维护；硬件绑定在板级装配或端口中维护。
+
+创建阶段仍由 `app_rtos_task_init()` 遍历生成的表，直接调用 `osThreadNew()`。运行中的通知、启动等待、日志和健康监测继续使用同一组编号与表项。清单本身不创建线程，也不占用额外的运行期任务栈或消息存储。
+
 <a id="s05"></a>
 ## 5. 初始化：为什么分对象创建、端口就绪、系统就绪
 
@@ -237,7 +366,7 @@ PID 积分、滤波历史、目标累计量等都属于可变状态。如果多�
 osKernelInitialize()
   → MX_FREERTOS_Init()
       → app_rtos_task_init()
-          → sys_init_event + 保留的示例二值信号量
+          → sys_init_event + 示例二值信号量
           → app_task_can_init()
           → app_task_dbus_init()
           → app_task_imu_init()
@@ -251,9 +380,9 @@ osKernelInitialize()
   → osKernelStart()
 ```
 
-每个模块在一个 `init()` 内清零数据并创建自己的队列/锁。没有独立的 queue/mutex/reset 函数表，也没有任务表里的 `.objects`。无通信对象的云台/底盘任务无需提供空初始化函数。
+每个对象所有者提供一个 `init()`，负责清零私有数据并创建队列、互斥量等资源；配套 `deinit()` 负责删除已创建的对象。任务表只描述线程配置。云台、底盘控制任务的算法状态由业务初始化建立，它们没有独立通信对象时无需对象初始化入口。
 
-未启用板型的预留通信对象仍创建，任务按板型创建。对象名称、容量和消息类型保留。创建失败时，先终止尚未运行的已创建线程，再逆序调用各模块 `deinit()` 删除非空对象。
+通信对象统一创建，线程根据任务表的板型条件创建。因此某些对象在本板没有业务消费者。创建失败时，先终止尚未运行的已创建线程，再逆序调用各模块 `deinit()` 删除非空对象。
 
 首次创建要求内核处于 `osKernelReady`；成功后重复调用直接返回。此入口不支持热重启。分配失败 Hook 可能先停机，所以回滚不是分配失败后的必达路径。
 
@@ -269,7 +398,7 @@ osKernelInitialize()
 6. 云台板启动 TIM14，设置 `APP_RTOS_EVT_SYS_READY`。
 7. 保存自身栈水位、完成状态，清空句柄并退出。
 
-共享快照/FIFO 已在模块创建入口清零，因此不再另行遍历 reset 回调。
+对象创建与硬件启动分属两个阶段：模块 `init()` 在调度器启动前建立可用的软件存储；`sys_init_Task` 在调度器启动后绑定设备并允许数据进入。ISR 发布数据前，接收对象和任务句柄必须有效。
 
 ### 5.3 同一个事件组保存三种启动事实
 
@@ -279,7 +408,7 @@ osKernelInitialize()
 | `APP_RTOS_EVT_SYS_READY` | 业务及必要标定完成 | 三个控制任务、IMU；VOFA 额外等待 |
 | `APP_RTOS_EVT_SYS_INIT_FAILED` | 初始化某一步明确失败 | 所有仍在启动门控中的任务 |
 
-任务调用 `app_tasks_wait_start(TASK_...)`，内部直接等待 `sys_init_event`，使用 `osFlagsWaitAny | osFlagsNoClear`。所有任务共享状态，不逐个发送启动线程标志，不需要先查询一次再等另一套通知。
+任务调用 `app_tasks_wait_start(TASK_...)`，按任务表的 `start_flags` 等待 `sys_init_event`，等待选项为 `osFlagsWaitAny | osFlagsNoClear`。事件组保存启动状态，供多个等待者读取。
 
 事件不清除：任务稍晚执行也能看到已发布的 READY。等待每 50 tick 超时维护心跳。若 READY 与 FAILED 同时存在，先按 FAILED 处理；健康/日志允许继续诊断，其他仍在门控中的任务进入等待状态。
 
@@ -311,7 +440,7 @@ osKernelInitialize()
 - 发射/VOFA：`next = app_rtos_start_tick + 5`。
 - 健康：按其启动后的时间建立 20 tick 周期。
 
-三个控制任务独立等待自己的时刻。IMU 不再“通知云台算一轮”，云台也不“通知发射算一轮”。输入更新和控制执行之间通过快照解耦。
+三个控制任务独立等待各自的绝对节拍。IMU 更新姿态快照，云台更新发射输入快照；控制任务在自己的周期读取最近完整副本。输入更新不会直接触发另一控制任务执行。
 
 ### 6.3 为什么不能只写一行 `osDelayUntil(next)`
 
@@ -330,10 +459,12 @@ osKernelInitialize()
 
 ```c
 uint32_t next = common_start_tick + period;
-for (;;) {
+for (;;)
+{
     /* 当前工程应使用已有 app_tasks_period_wait()，不要用这个片段替换它。 */
     missed += lib_periodic_skip_expired(osKernelGetTickCount(), period, &next);
-    if (osKernelGetTickCount() != next) {
+    if (osKernelGetTickCount() != next)
+    {
         /* 完整实现必须检查返回值并处理检查后目标到期的竞争。 */
         (void)osDelayUntil(next);
     }
@@ -444,7 +575,7 @@ flowchart TB
     STATE --> HEALTH
 ```
 
-裁判快照已经保留 App 可用的数据，但**当前底盘控制没有新增裁判限功率/限热量策略**，图里因此没有把这项预留功能画成已运行的控制通路。需要使用时按第 20 节接入。
+裁判任务发布机器人状态、功率和热量等快照。底盘的功率控制使用固定 100 W 目标和功率计闭环；裁判快照中的功率与热量字段供读取，当前控制路径不使用这些字段施加限制。第 20 节说明如何接入这类业务输入。
 
 ### 7.2 六个 CAN 队列
 
@@ -489,6 +620,24 @@ flowchart TB
 | 连续字节到达、协议边界未知 | 字节 FIFO+解析器 | 处理溢出、重同步及生产者规则 |
 
 这些机制可以组合。当前“队列+线程标志”就是：队列保存消息，标志让一个负责多种事件的任务及时醒来。
+
+### 7.5 通信对象由谁持有
+
+| 所有者 | 模块内的对象 | 生命周期入口 |
+|---|---|---|
+| CAN | `can1_rx_queue`、`can2_rx_queue`、`can1_tx_queue`、`can2_tx_queue`、`can_to_ctrl_queue`、`ctrl_to_can_queue`、`can_feedback_mutex` | `app_task_can_init/deinit()` |
+| DBUS | `dbus_rx_queue`、`dbus_to_gim_mutex` | `app_task_dbus_init/deinit()` |
+| IMU | `imu_rx_queue`、`imu_to_gim_mutex` | `app_task_imu_init/deinit()` |
+| 发射 | `dbus_to_shoot_mutex` | `app_task_shoot_init/deinit()` |
+| 裁判 | `ref_to_chas_mutex`、1024 字节软件 FIFO | `app_task_referee_init/deinit()` |
+| 健康 | `sys_health_mutex` | `app_task_health_init/deinit()` |
+| 遥测 | `ctrl_state_mutex` | `app_task_telemetry_init/deinit()` |
+| 日志 | `sys_log_queue` | `app_task_log_init/deinit()` |
+| 应用装配 | `sys_init_event`、`app_rtos_example_binary_sem` | `app_rtos_task_init()` 及其失败回收路径 |
+
+这些句柄在所属 `.c` 内以 `static` 定义。调用者使用 read、write、send 等领域接口交付值；模块在内部选用队列或互斥量，并负责计数与唤醒。软件 FIFO 是静态字节数组，不属于 CMSIS 消息队列对象。
+
+对象创建在调度器启动前完成，正常运行期间持续有效；`deinit()` 用于启动创建失败时回收。扩展现有任务的资源，在该模块的初始化和回收中处理；新建对象所有者时，在应用装配入口接入它的生命周期。
 
 <a id="s08"></a>
 ## 8. 队列：传副本、传指针与容量
@@ -537,7 +686,7 @@ osMessageQueuePut(q, &p, 0, 0);   /* 只复制指针值 */
 
 ### 8.4 `union` 为什么能节省空间
 
-`app_can_ctrl_msg_t` 和 `app_ctrl_can_msg_t` 把互斥的消息载荷放在联合体里，同一条消息只使用一种载荷。`id` 或 `type` 告诉消费者哪一个成员有效。
+`app_can_ctrl_msg_t` 和 `app_ctrl_can_msg_t` 把互斥的消息载荷放在联合体里，同一条消息只使用一种载荷。`type` 告诉消费者哪一个成员有效。
 
 发送电流时填写 `value.current`，解析电流类型时也只读该成员。不要发送 `type=APP_CAN_GIM_CURRENT` 却填 `value.chassis`。建议创建局部消息时用 `{0}` 初始化，防止未填字段和填充字节遗留旧内容。
 
@@ -548,17 +697,23 @@ osMessageQueuePut(q, &p, 0, 0);   /* 只复制指针值 */
 ```c
 /* 任务：立即尝试，满了返回，不等待。 */
 osStatus_t s = osMessageQueuePut(ctrl_to_can_queue, &message, 0, 0);
-if (s != osOK) {
+if (s != osOK)
+{
     /* 记录丢弃，按该消息的业务策略处理。 */
 }
 
 /* 任务：最多等 50 ticks；超时不是故障。 */
 s = osMessageQueueGet(sys_log_queue, &event, NULL, 50);
-if (s == osOK) {
+if (s == osOK)
+{
     /* 处理 event。 */
-} else if (s == osErrorTimeout || s == osErrorResource) {
+}
+else if (s == osErrorTimeout || s == osErrorResource)
+{
     /* 没消息，继续本任务的其他工作。 */
-} else {
+}
+else
+{
     /* 参数/上下文/对象状态等异常。 */
 }
 ```
@@ -589,9 +744,9 @@ if (s == osOK) {
 
 调容量时同时观察丢弃计数、消息年龄和最大积压；当前诊断已有丢弃计数，**并没有为所有队列完整记录历史峰值**。必要时再添加峰值统计。控制类消息积压过多会变成“发送过时电流”，容量并非越大越好。
 
-### 8.8 容量现在只有一个实际配置来源
+### 8.8 容量配置与创建参数
 
-`Config/app_rtos_config.h` 定义 CAN RX/TX、控制方向、日志、DBUS、IMU 队列容量以及裁判 FIFO 大小、处理批次预算。
+`App/Config/app_rtos_config.h` 定义 CAN RX/TX、控制方向、日志、DBUS、IMU 队列容量以及裁判 FIFO 大小、处理批次预算。
 
 例如 CAN 模块的 app_task_can_init() 使用：
 
@@ -600,7 +755,7 @@ app_rtos_object_queue(&can1_rx_queue, "can1_rx_queue",
     APP_RTOS_CAN_RX_QUEUE_DEPTH, sizeof(app_can_frame_t));
 ```
 
-创建实参直接取宏，不再另写 `32`。调容量改此配置头即可；消息结构改变时，队列大小仍由 `sizeof(实际类型)` 得到。各模块负责创建和回滚，容量宏不改变数据所有权。裁判 FIFO 大小必须是大于零的 2 次幂，源码有编译期约束。
+创建实参使用配置宏，消息大小使用 `sizeof(实际类型)`。调整容量在此配置头进行，各模块负责对象创建和回收。裁判 FIFO 大小必须是大于零的 2 次幂，源码有编译期约束。
 
 <a id="s09"></a>
 ## 9. 快照、互斥量与“取得完整副本”
@@ -618,12 +773,12 @@ app_rtos_object_queue(&can1_rx_queue, "can1_rx_queue",
 | `dbus_to_gim_mutex` | DBUS 任务 | 遥控快照；云台及需要遥控数据的诊断读取者 |
 | `dbus_to_shoot_mutex` | 云台任务 | 已裁决发射命令；发射任务 |
 | `imu_to_gim_mutex` | IMU 任务，启动时初始化任务 | 姿态；云台及姿态诊断读取者 |
-| `ref_to_chas_mutex` | 裁判任务 | 完整裁判业务快照；控制读取接口保留，当前控制未接入 |
+| `ref_to_chas_mutex` | 裁判任务 | 完整裁判业务快照；提供任务读取接口 |
 | `can_feedback_mutex` | CAN 任务 | 电机/功率计/角速度；各控制与业务诊断读取者 |
 | `ctrl_state_mutex` | 各控制任务只更新自己字段 | 控制状态及 VOFA；日志等 |
 | `sys_health_mutex` | 健康任务 | 完整健康表；日志/诊断 |
 
-`dbus_to_shoot_mutex` 名称是保留的旧名，当前保护的是云台裁决后的命令，可能来自 DBUS，也可能来自 CAN。它与 DBUS 原始快照不是同一份数据。
+`dbus_to_shoot_mutex` 保护云台任务裁决后的发射命令，命令来源可能是 DBUS 或 CAN。DBUS 原始输入快照由 `dbus_to_gim_mutex` 保护，两把锁对应不同数据。
 
 ### 9.3 当前读写策略
 
@@ -639,7 +794,8 @@ bool read_snapshot(snapshot_t *local)
 
 void write_snapshot(const snapshot_t *local)
 {
-    if (osMutexAcquire(snapshot_mutex, osWaitForever) == osOK) {
+    if (osMutexAcquire(snapshot_mutex, osWaitForever) == osOK)
+    {
         shared_snapshot = *local;
         osMutexRelease(snapshot_mutex);
     }
@@ -656,7 +812,8 @@ void write_snapshot(const snapshot_t *local)
 /* 在现有控制任务里使用；不是再创建一个控制任务。 */
 static app_imu_snapshot_t local_imu;
 
-if (!app_rtos_imu_read(&local_imu)) {
+if (!app_rtos_imu_read(&local_imu))
+{
     app_rtos_task_stats[TASK_GIM].snapshot_failures++;
     /* local_imu 仍保留上一份完整副本。 */
 }
@@ -692,9 +849,9 @@ uint32_t age = (uint32_t)(osKernelGetTickCount() - local_imu.tick);
 |---|---|---|
 | 多个任务等待启动状态 | 同一 `sys_init_event` 持久事件组 | 事实应保存，晚等待者也能看到 |
 | CAN/DBUS/IMU/裁判有工作 | 各自线程的 `APP_RTOS_TF_DATA_READY` | 只需唤醒；数据/错误详情已有存储 |
-| UART1 本次发送的结果 | `APP_RTOS_TF_TX_DONE` 与 `APP_RTOS_TF_IO_ERROR` | 日志需要区分完成和错误，确定缓冲能否复用 |
+| UART1 单笔发送的结果 | `APP_RTOS_TF_TX_DONE` 与 `APP_RTOS_TF_IO_ERROR` | 日志需要区分完成和错误，确定缓冲能否复用 |
 
-`APP_RTOS_TF_STOP_REQUEST` 继续保留为预留位，当前没有停止协议。原先三个启动线程位及 `APP_RTOS_WAKE_FLAGS` 组合已经移除。
+`APP_RTOS_TF_STOP_REQUEST` 是预留位，当前任务循环不消费它。正常启动使用事件组，运行期间的工作提示使用线程标志。
 
 ### 10.2 一个唤醒位为什么够用
 
@@ -735,9 +892,9 @@ app_tasks_wait_phase(TASK_LOG, APP_RTOS_EVT_SYS_READY);
 
 当前 CMSIS 适配层使用 FreeRTOS 任务通知实现线程标志。同一任务不能随意再混入 `xTaskNotify*()`，否则可能争用同一个底层通知状态。业务统一使用 CMSIS 线程标志。
 
-### 10.5 示例二值信号量继续保留
+### 10.5 示例二值信号量的使用
 
-`app_rtos_example_binary_sem` 最大计数 1、初始计数 0，在统一创建入口分配，提供 `app_rtos_example_sem_release/acquire`。它保留作示例和预留能力，当前样本接收与 UART 完成不使用它。
+`app_rtos_example_binary_sem` 最大计数 1、初始计数 0，在统一创建入口分配，提供 `app_rtos_example_sem_release/acquire`。它用于展示二值信号量的交付和等待方式，当前样本接收与 UART 完成使用各自的队列和线程标志。
 
 ```c
 /* 生产者：交出一次可合并的许可。 */
@@ -819,7 +976,7 @@ ISR 成功叫醒更高优先级任务时，本地 CMSIS 适配负责请求必要
 
 当前 `HAL_TIM_PeriodElapsedCallback()` 的强定义在 `Core/Src/main.c`：TIM6 更新 HAL tick，随后通过 BSP 分发定时器事件。不要又在其他文件实现第二个同名强定义。
 
-想让多个模块响应同一个 HAL 回调，应使用项目的 BSP 回调登记/分发机制，而不是让每个模块各写一个 `HAL_TIM_PeriodElapsedCallback()`。
+多个定时器共用这一 HAL 更新回调，再由 BSP 按句柄分发。每个定时器在 BSP 中对应一个回调函数；同一定时器需要触发多个动作时，由它的回调统一组织这些短操作。
 
 ### 11.6 当前三个 FreeRTOS Hook
 
@@ -853,6 +1010,56 @@ app_rtos_irq_unlock(key);
 ```
 
 它保存并恢复原 PRIMASK。不要写成“先关中断，结束一律开中断”，否则会破坏外层本来就关着的状态。关 CPU 中断也不会停止 DMA 硬件继续写内存。
+
+### 11.8 定时器回调注册表的使用
+
+`Bsp/bsp_tim.c` 的 `s_period_table` 静态保存定时器句柄与更新回调，容量由 `BSP_TIM_REG_MAX` 指定，默认 14 项。注册以句柄地址为键：HAL 分发使用哪个句柄，注册时就传入同一个句柄；句柄在注册期间必须一直有效。
+
+| 操作 | 写法 | 结果 |
+|---|---|---|
+| 注册一个定时器 | `bsp_tim_reg_callback(&htim14, imu_tick)` | 保存该定时器的回调 |
+| 注册另一个定时器 | 使用另一个有效句柄和对应函数 | 独立占用一项，已有定时器的条目保持有效 |
+| 更新同一定时器 | 使用同一句柄和新函数再次注册 | 替换该项函数，不额外占槽 |
+| 注销一个定时器 | `bsp_tim_reg_callback(&htim14, NULL)` | 删除该项，槽位可以复用；未注册时注销也成功 |
+
+注册函数返回 `HAL_OK` 表示成功，`HAL_ERROR` 表示句柄或 `Instance` 无效，`HAL_BUSY` 表示新增时表已满。查找已存在条目在容量检查之前，所以表满时仍可更新和注销。
+
+调用链：
+
+```text
+对应 TIM 的 IRQ
+  → HAL_TIM_IRQHandler(&htimX)
+  → main.c 中唯一的 HAL_TIM_PeriodElapsedCallback(htim)
+      → TIM6 时调用 HAL_IncTick()
+      → bsp_tim_period_elapsed_callback(htim)
+          → 按句柄查询 s_period_table
+          → 调用此定时器的回调；未注册时忽略
+```
+
+注册只保存函数地址，启动更新中断由 `bsp_tim_it_start()` 或 `HAL_TIM_Base_Start_IT()` 完成；PWM 操作不需要登记更新回调。当前云台板在 `app_rtos_board_init()` 注册 TIM14 的 `imu_tick()`，在后续采样启动阶段开启 TIM14；注册失败会使初始化进入失败状态。
+
+下面是接入 TIM7 的示例，前提是在 CubeMX 配置并生成 TIM7 的句柄、更新中断和 NVIC 接入，且使用文件能看到 `htim7` 的声明，例如包含生成的 `tim.h`，或在 `bsp_cfg.h` 接入对应的 `extern` 声明：
+
+```c
+static void tim7_tick(void)
+{
+    /* 在 ISR 中保存数据或唤醒任务；只执行有界、非阻塞操作。 */
+}
+
+static bool tim7_service_start(void)
+{
+    if (bsp_tim_reg_callback(&htim7, tim7_tick) != HAL_OK)
+    {
+        return false;
+    }
+
+    return HAL_TIM_Base_Start_IT(&htim7) == HAL_OK;
+}
+```
+
+在初始化阶段或停止目标定时器中断后注册、更新、注销。注册表的读写使用保存/恢复 PRIMASK 的短临界区，分发在取得函数指针后先离开临界区，再执行回调。该保护只保证表操作一致，不会停止定时器，也不会等待已经开始的回调结束。
+
+回调在原 TIM 的 ISR 上下文执行，不能使用 `osDelay()`、等待互斥量或执行长计算。若需要投递队列或设置线程标志，TIM 中断优先级也必须满足第 11.3 节的 RTOS 约束。TIM6 的 HAL 时基处理由 `main.c` 负责，业务应选择自己的定时器和节拍。
 
 <a id="s12"></a>
 ## 12. 裁判系统：从串口字节到业务快照
@@ -1002,7 +1209,8 @@ USART6 与其 DMA 接收回调来自两个 IRQ 入口，但当前使用相同抢
 uint8_t reset;
 uint16_t n = app_rtos_ref_pop(chunk, sizeof(chunk), &reset);
 if (reset) drv_referee_reset_stream();
-if (n) {
+if (n)
+{
     drv_referee_parse_result_t result = drv_referee_process(chunk, n);
     /* 累计 result。 */
 }
@@ -1084,7 +1292,7 @@ if (n) {
 5. 保留历史有效类别，发布本批 updated_mask、sequence 和时间。
 6. 累加错误计数，调用端口 poll 处理恢复，然后等待事件。
 
-大结构体不再每取出一小段就完整复制、加锁一次。128 B/8 段的处理预算也使任务处理有界。
+一批数据处理结束后，只在最终发布时加锁复制大结构体。128 B/8 段的处理预算使单次工作量有界。
 
 `app_tasks_profile_end()` 在这条路径按解析段记录，不能把它的 cycles 无条件解释为“裁判协议帧数”。协议帧数看解析结果/快照 sequence。
 
@@ -1227,11 +1435,11 @@ ACC 和 GYRO 共用 SPI，必须顺序接收。ACC 回调时，HAL 或另一个 
 5. 发布带时间/序号/有效性的姿态快照，更新健康状态。
 6. 驱动恢复轮询，等待 DATA_READY；1 tick 超时只推进恢复，不触发下一次采样。
 
-任务层仍控制处理顺序，但不再解释芯片寄存器字节布局。TIM14 保持唯一采样触发源，控制任务独立用 `osDelayUntil()`。
+任务层组织样本处理顺序，Drv 解析芯片寄存器字节布局。TIM14 是采样触发源，控制任务独立用 `osDelayUntil()` 调度。
 
 ### 14.6 初始化与运行期分开
 
-初始化时允许任务内同步 SPI 配置、3000 次零偏标定，并注入基于 `osDelay()` 的等待函数。运行时改走 DMA 状态机，解析和 AHRS 在任务。
+初始化阶段在任务内使用同步 SPI 完成配置、3000 次零偏标定，标定间隔通过注入的 `osDelay()` 等待函数实现。运行阶段使用 DMA 状态机接收样本，解析和 AHRS 在 IMU 任务执行。
 
 BMI088 的片选、SPI1、DMA、TIM14 都是当前 STM32 端口映射。以后换 MCU，保留计算方法，替换访问和采样交付即可。加热 PWM 接口存在不意味着已经实现一套温度闭环控制。
 
@@ -1254,7 +1462,7 @@ BMI088 的片选、SPI1、DMA、TIM14 都是当前 STM32 端口映射。以后�
 
 云台板由 `ctrl_gim_Task` 统一消费 `can_to_ctrl_queue`，执行控制源选择并发布发射命令；底盘板由 `ctrl_chas_Task` 消费。
 
-每轮把本周期新指令的更新位汇总，同 ID 保留本周期最后一条，按原裸机语义应用；角度增量只应用一次。若把旧增量存在共享状态后每毫秒重复加，就会把“一次调整”变成持续运动。
+每轮把本周期新指令的更新位汇总，同 ID 保留本周期最后一条，按业务规定的顺序应用；角度增量只应用一次。若把旧增量存在共享状态后每毫秒重复加，就会把“一次调整”变成持续运动。
 
 当前“同 ID 保留最后一条”也意味着它并非逐事件可靠累计通道。如果未来某类指令要求保留每次增量或交易，必须单独确定累计/确认策略。
 
@@ -1293,7 +1501,7 @@ CAN 任务优先级高于控制任务。总线很忙时若无限处理接收，�
 - 这套合并适合可覆盖的连续控制状态；“每次触发都必须执行”的离散事件不能直接沿用。
 - 入队成功只表示存入软件队列，邮箱提交成功也不等于对方应用已经处理。
 
-### 15.6 保留的裸机协议与业务边界
+### 15.6 协议、频率与控制行为
 
 | 内容 | 当前行为 |
 |---|---|
@@ -1302,10 +1510,10 @@ CAN 任务优先级高于控制任务。总线很忙时若无限处理接收，�
 | 底盘电流 | CAN2 `0x200/0x1FF`，1 kHz |
 | 云台反馈 | 200 Hz `0x122/0x124/0x233` |
 | 底盘反馈 | 200 Hz `0x112/0x119` |
-| 底盘指令 | `0x111`，保留原 `0x120→0x111` 转发语义 |
-| `0x113/0x115` | 解析保存，不新增未实现车型/模式控制 |
-| 功率闭环 | 保留固定 100 W 目标和功率计闭环 |
-| 裁判限制 | 已接收并发布，当前未新加裁判限功率或限热量 |
+| 底盘指令 | 接收 `0x120` 对应的业务指令后，使用 `0x111` 转发底盘命令 |
+| `0x113/0x115` | 解析并保存；没有对应的控制模式执行路径 |
+| 功率闭环 | 固定 100 W 目标，由功率计反馈完成闭环 |
+| 裁判限制 | 裁判数据接收并发布；控制路径不使用裁判功率或热量限值 |
 
 协议单位和字节序以 `App/common/data/app_can_data.h`、对应协议头及编解码为准。新增帧时不要直接把任意运行时结构体 memcpy 上总线：要确认对齐、字节序、字段宽度和浮点表示。
 
@@ -1336,7 +1544,7 @@ app_rtos_log(TASK_GIM, 2, 900, error_detail, measured_value);
 
 当前 CMake 默认 TEXT。VOFA 模式不能同时在同一字节流插入 `[MEM]` 文本，否则上位机二进制解析会被破坏。诊断状态在健康快照和计数器里仍然保留。
 
-原八通道 VOFA 帧为 36 B，200 Hz 约 7200 B/s；115200、8N1 理论约 11520 B/s，约占 62.5% 线速。文本报告也有传输时间，不应在控制周期里直接发送一整张表。
+八通道 VOFA 帧为 36 B，200 Hz 约 7200 B/s；115200、8N1 理论约 11520 B/s，约占 62.5% 线速。文本报告也有传输时间，不应在控制周期里直接发送一整张表。
 
 ### 16.3 当前是 UART 中断发送，不是 UART TX DMA
 
@@ -1380,13 +1588,13 @@ CCMRAM（当前链接脚本64 KiB）
   └─ 是否放对象取决于链接段；STM32F407 DMA不能直接访问这里
 ```
 
-这里是布局解释，不是本轮编译得到的内存占用图。不要把普通 SRAM 和 CCM 当成对 DMA 完全等价的一整块内存。
+具体占用由链接布局、静态对象和运行期分配共同决定。普通 SRAM 与 CCM 对 DMA 的可访问性不同，分配接收缓冲时需要区分。
 
 ### 17.2 应用任务栈从哪里来
 
 当前任务表传入 stack_size，但没有提供 static stack_mem/cb_mem，因此应用任务按动态方式创建，任务栈和内核控制块占用 FreeRTOS 堆。
 
-`configSUPPORT_STATIC_ALLOCATION=1` 只说明支持静态分配，不代表全部任务已经改成静态。Idle/Timer 的静态内存支持回调由当前 CMSIS 适配层提供，它们不等同于应用任务的动态创建方式。
+`configSUPPORT_STATIC_ALLOCATION=1` 表示内核支持静态分配。当前应用任务使用动态创建；Idle/Timer 的静态内存支持回调由 CMSIS 适配层提供，应用任务与内核服务任务的分配方式需分别看待。
 
 初始化任务退出后的资源回收也有内核过程：删除自身的任务资源通常由 Idle 处理，不能假定 `osThreadExit()` 调用那一行就完成全部回收。
 
@@ -1480,9 +1688,9 @@ FREE → 生产者取得块 → 填写/等待DMA完成
 | 功率计 | CAN 任务，有效功率反馈时间 | 100 ms |
 | 裁判 | 裁判任务，有效 CRC 帧处理时间 | 1000 ms |
 
-名称、阈值、板型条件来自 `Config/app_rtos_module_list.def`。未启用模块不告警。裁判整体在线仍不保证每个业务字段新鲜，控制读取必须检查 `field_tick[]`。健康只告警，保持原 App 急停/断线策略。
+名称、阈值、板型条件来自 `App/Config/app_rtos_module_list.def`。未启用模块不告警。裁判整体在线仍不保证每个业务字段新鲜，控制读取必须检查 `field_tick[]`。健康任务发布诊断和告警，急停与断线行为由 App 控制策略决定。
 
-IMU 任务另外调用 `app_rtos_module_diagnostics()` 发布驱动累计错误和忙计数，健康模块不直接调用 IMU 驱动。其他模块的错误/overruns 未单独发布时为 0，全局错误计数表继续保留。
+IMU 任务另外调用 `app_rtos_module_diagnostics()` 发布驱动累计错误和忙计数，健康模块不直接调用 IMU 驱动。其他模块的错误/overruns 未单独发布时为 0，通信投递和外设错误由全局计数表记录。
 
 ### 18.2 任务心跳
 
@@ -1520,10 +1728,10 @@ Tick Hook 更新 DWT 锚点，`app_rtos_wakeup_delay_us()` 将整 tick 延迟和
 | code | 参数含义 |
 |---:|---|
 | 20 | 当前任务告警数、堆余量摘要 |
-| 21 | 任务索引、栈余量，新增栈告警 |
+| 21 | 任务索引、栈余量，表示进入栈告警状态 |
 | 22 | 任务索引、心跳年龄，失活变化 |
-| 23 | 任务索引、新增漏周期数 |
-| 24 | `COUNT_*` 索引、新增错误计数 |
+| 23 | 任务索引、漏周期计数增量 |
+| 24 | `COUNT_*` 索引、错误计数增量 |
 | 100+模块索引 | 该模块离线及年龄信息 |
 
 修改阈值时依据模块真实更新率和可容忍延迟。阈值不是“把报警消掉就正确”；长期超期应检查负载和数据流。
@@ -1538,22 +1746,22 @@ Tick Hook 更新 DWT 锚点，`app_rtos_wakeup_delay_us()` 将整 tick 延迟和
 | 根 CMake / CMakePresets | APP_BOARD、APP_LOG_MODE、APP_ROBOT |
 | `Self_core/project_cfg.h` | 默认板型/车型和合法值 |
 | `App/Config/app_board_config.h` | 各板具备哪些模块能力 |
-| `FreeRTOS/app_rtos.c` 的任务配置表 | 显式任务配置表：原名、入口、栈、优先级、板型、启动阶段、失败策略、生命周期；稳定 ID 见 app_rtos_types.h |
-| `Config/app_rtos_config.h` | 队列/FIFO 容量、控制周期、事件等待上限、处理预算、内存阈值 |
-| `Config/app_rtos_module_list.def` | 数据源名称、在线阈值和板型 |
+| `App/Config/app_task_list.def` | 任务编号名、句柄名、入口、显示名、栈、优先级、板型、启动阶段、失败策略和生命周期；编号与任务表由清单生成 |
+| `App/Config/app_rtos_config.h` | 队列/FIFO 容量、调度 tick 配置、事件等待上限、处理预算、内存阈值 |
+| `App/Config/app_rtos_module_list.def` | 数据源名称、在线阈值和板型 |
 | 各层 `Self_core/*/CMakeLists.txt` | 本层的源文件和可见头目录 |
 | `Core/Inc/FreeRTOSConfig.h` 与 `.ioc` | 内核及 CubeMX 外设配置 |
 | `App/Tasks/<任务>/app_task_<任务>.c` | 对应模块处理流程、私有资源与状态 |
 
-App 的 PID、机械参数、模式和安全规则依然放在 App/Lib 的对应业务位置，不能把所有业务参数都堆进 RTOS 配置头。
+控制周期和算法步长来自 `App/Config/app_control_config.h`。PID、机械参数、模式和安全规则分别放在 App/Lib 的对应业务位置，按参数的职责选择配置文件。
 
 ### 19.2 板型与日志模式
 
 当前支持 `APP_BOARD=GIMBAL|CHASSIS`，`APP_LOG_MODE=TEXT|VOFA`，`APP_ROBOT=SENTRY`。未实现车型会明确报配置错误。
 
-四个 preset 已存在：`GIMBAL_TEXT`、`GIMBAL_VOFA`、`CHASSIS_TEXT`、`CHASSIS_VOFA`。
+四种板型/日志组合的 preset 为：`GIMBAL_TEXT`、`GIMBAL_VOFA`、`CHASSIS_TEXT`、`CHASSIS_VOFA`。
 
-在工程根目录，具备本项目 ARM 工具链环境后可使用以下命令；按日期区分的实际构建结果见 `FREERTOS_VALIDATION.md`：
+在工程根目录，配置本项目 ARM 工具链后，使用同名的 configure/build preset：
 
 ```powershell
 cmake --preset GIMBAL_TEXT
@@ -1576,11 +1784,11 @@ cmake --build --preset GIMBAL_TEXT
 | CAN1/CAN2 | 正确波特率/过滤器分配，接收、发送邮箱完成和错误中断 |
 | 使用RTOS API的IRQ | 当前采用允许的抢占优先级5，保持正确分组 |
 
-当前 `.ioc` 已记录 USART3/6 DMA、对应 IRQ 和 RTOS 堆/Hook 等接入参数。仍需在重新生成后核对实际源码，尤其是项目自行加入的分发调用；表格不是说要把当前外设全部重新配置一遍。
+`.ioc` 保存 USART3/6 DMA、对应 IRQ 和 RTOS 堆/Hook 等接入参数。重新生成后核对生成源码和项目分发调用，确保中断仍能把数据交给对应任务。
 
 ### 19.4 CubeMX 不负责创建这十个业务任务
 
-CubeMX 的任务列表保持空，由 `app_rtos.c` 按板型创建。不要又在 GUI 里建立同名任务，否则可能重复创建、出现第二份入口或句柄混乱。
+CubeMX 的任务列表保持空，由 `app_rtos.c` 按 `app_task_list.def` 生成的表和板型条件创建。不要又在 GUI 里建立同名任务，否则可能重复创建、出现第二份入口或句柄混乱。
 
 CubeMX 中选择“外设分别生成 `.c/.h`”决定初始化是在 main 还是 gpio/can/usart 等独立文件。那是代码生成布局选项，不改变任务调度方式。
 
@@ -1596,7 +1804,9 @@ HAL/BSP 的 CAN、SPI、UART完成分发也必须正常连接。DMA IRQ 不触�
 
 ### 19.6 CMake 分层与 Keil 同步
 
-每层 `CMakeLists.txt` 仍用明确的 `module_sources/module_includes` 清单，Keil 同步脚本读取同一清单。
+每层 `CMakeLists.txt` 使用明确的 `module_sources/module_includes` 清单，Keil 同步脚本读取同一清单。
+
+`app_task_list.def` 通过 `#include` 参与预处理，不作为 `.c` 单独编译。App 的 CMake 已将 `.h/.def` 标记为 `HEADER_FILE_ONLY`，并提供 `App/Config` 包含目录；Keil 也使用该包含目录。新增任务的 `.c` 和新目录仍须进入正常源码清单，任务清单负责运行属性。
 
 | 编译目标 | 内容 | 依赖边界 |
 |---|---|---|
@@ -1606,18 +1816,18 @@ HAL/BSP 的 CAN、SPI、UART完成分发也必须正常连接。DMA IRQ 不触�
 | `self_os` | 对象、内核和 CPU 适配 | 不链接 App/Drv/Bsp；HAL/CMSIS 设备依赖仅用于自身实现 |
 | `self_lib/self_drv/self_bsp` | 通用库、设备、外设 | 各层保留自己的清单 |
 
-所有 OBJECT 目标直接进入最终固件链接。`self_os_api` 只传播通用 Os 头和 CMSIS-RTOS2 声明目录；它不再向调用者传播整套 STM32 HAL 包含路径。
+所有 OBJECT 目标直接进入最终固件链接。`self_os_api` 向调用方传播通用 Os 头和 CMSIS-RTOS2 声明目录；HAL 和设备头的包含路径由实际需要硬件访问的目标持有。
 
 ```powershell
 python tools/sync_keil_project.py
 ```
 
-脚本默认保留 Keil 原有宏与工具链设置；显式切换可使用 `--board GIMBAL|CHASSIS --log-mode TEXT|VOFA`。当前同步 57 个 Self_core C 源文件。任务 `.c/.h` 与端口配套文件放同一任务目录，移动后旧路径不再列入工程。
+脚本默认保留 Keil 的宏与工具链设置；显式切换可使用 `--board GIMBAL|CHASSIS --log-mode TEXT|VOFA`。任务 `.c/.h` 与端口配套文件放同一任务目录，源文件清单负责把它们纳入构建。
 
-已完成六个 CMake preset 的编译链接，Keil 尚未实际编译；Keil 使用的 RVDS FreeRTOS port 等原工具链条件仍应按本机安装准备。
+Keil 使用工程选择的编译器、设备包和 FreeRTOS port。同步脚本维护文件和配置清单；实际编译由对应 IDE 或命令行工具完成。
 
 <a id="s20"></a>
-## 20. 我以后具体该怎么写
+## 20. 开发步骤与文件入口
 
 ### 20.1 先决定加业务还是加任务
 
@@ -1649,7 +1859,7 @@ App/sentry 与 App/common 的纯算法/协议代码不写 `osMutexAcquire()`，�
 
 ### 20.3 在现有任务中提交一份 CAN 电流结果
 
-以下使用当前消息字段，放在正确的现有控制路径里理解；不要与原发送重复叠加：
+下面展示一份云台电流结果的提交方式。现有任务已经执行对应控制路径，示例用于说明消息字段和调用规则：
 
 ```c
 app_ctrl_can_msg_t m = {0};
@@ -1663,9 +1873,9 @@ m.value.current[2] = pitch_current;
 app_rtos_ctrl_send(&m);
 ```
 
-`app_rtos_ctrl_send()` 已负责超时 0 入队、失败计数和通知 CAN。不要再同时在这里直接调用 HAL 发同一帧。`my_output_sequence`、电流变量为示例名，实际路径已有自己的序号和输出。
+`app_rtos_ctrl_send()` 负责超时 0 入队、失败计数和通知 CAN，后续编码和硬件发送由 CAN 任务完成。`my_output_sequence`、电流变量为示例名，实际路径使用对应控制任务持有的序号和输出。
 
-### 20.4 新增一份多读者最新状态
+### 20.4 建立多读者最新状态
 
 1. 在对应领域的 `App/common/data/app_<领域>_data.h` 定义类型，注明单位、tick、sequence、valid。
 2. 在所属任务 `.c` 内定义 `static` 快照和 `static osMutexId_t`，不要公开句柄。
@@ -1673,22 +1883,22 @@ app_rtos_ctrl_send(&m);
 4. 对外提供 read/write；锁内只复制，读超时 0、失败保留上周期本地副本。
 5. 如果是全新对象所有者，才在 `app_rtos.c` 补一对直接 init/deinit 调用；给已有任务增加一把锁不需要改中央创建流程或 Os。
 
-不再编写 `app_rtos_module_ops_t` 或修改任务配置表的 `.objects`。应用层互斥量保持优先级继承；中断只交付队列/FIFO，不写需要互斥量的共享快照。
+模块负责快照的存储和生命周期，Os 提供创建与复制机制。互斥量启用优先级继承；中断通过队列/FIFO 交付数据，任务取得数据后再发布快照。
 
-### 20.5 新增事件任务的具体接入点
+### 20.5 接入事件任务
 
 1. 在 `App/Tasks/<新任务>` 新建配对 `.c/.h`，任务入口只在自己的头声明。
-2. 在 `app_rtos_types.h` 的 `TASK_COUNT` 前追加稳定任务编号。
-3. 在 `App/Tasks/common/app_rtos.c` 增加句柄与一个任务表项，填入口、栈、优先级、板型 enabled、启动事件条件。该文件包含新任务头；需要公共句柄时在 `app_tasks.h` 声明。
-4. 若拥有 IPC，则模块提供一个 init/deinit，把直接调用加入 `app_rtos_task_init()` 和逆序回滚；没有 IPC 时无需空函数或描述符。
-5. 中断先保存数据，再 `app_rtos_notify_task(TASK_新任务, APP_RTOS_TF_DATA_READY)`。任务入口先 `app_tasks_wait_start()`，循环中按预算处理并调用 `app_tasks_wait_event()`。
+2. 在 `App/Config/app_task_list.def` 末尾追加一个 `APP_TASK(...)`。填编号名、句柄名、入口名，以及显示名、栈、优先级、板型 `enabled` 和启动条件。格式见第 4.4 节；普通常驻任务可省略两个策略字段。
+3. 在 `App/Tasks/common/app_rtos.c` 包含新任务头，保证创建表能看到入口声明。编号、`TASK_COUNT`、句柄声明/定义和表项自动生成，不再分别手写。
+4. 若拥有 IPC，则模块提供一个 init/deinit，把直接调用加入 `app_rtos_task_init()` 和逆序回滚；没有 IPC 时无需空函数或描述符。已有模块增加一个对象，只改自己的 init/deinit。
+5. 中断先保存数据，再 `app_rtos_notify_task(TASK_新任务, APP_RTOS_TF_DATA_READY)`。任务入口先 `app_tasks_wait_start()`，循环中按预算处理并调用 `app_tasks_wait_event()`，使用清单生成的编号维护统计。
 6. 在 `App/CMakeLists.txt` 增加源文件/头目录，运行 Keil 同步脚本。
 
-更改一个现有任务的栈或优先级，只改任务表的一项；更改已有对象容量，只改 `App/Config/app_rtos_config.h`。无需修改 Os。
+更改一个现有任务的栈或优先级，只改 `app_task_list.def` 对应记录；更改已有对象容量，只改 `App/Config/app_rtos_config.h`。无需修改 Os。任务清单不替你接通新外设的接收回调、算法输入输出或快照读写，这些按所属模块的数据流实现。
 
-### 20.6 新增周期任务
+### 20.6 接入周期任务
 
-保留当前“共同起点 + 绝对节拍 + 跳过过期周期”的语义，首轮偏移和周期要明确。工作顺序通常是：
+周期任务采用“共同起点 + 绝对节拍 + 跳过过期周期”，明确首轮偏移和周期。工作顺序通常是：
 
 ```text
 app_tasks_wait_start(TASK_...) /* 表配置 SYS_READY */
@@ -1743,23 +1953,65 @@ app_tasks_wait_start(TASK_...) /* 表配置 SYS_READY */
 
 例如“发送 CAN 数据”不够明确；“控制任务调用，复制到队列，timeout=0，满时丢弃并计数，不代表邮箱已完成发送”才能帮助后续维护者正确使用。
 
-<a id="s21"></a>
-## 21. 要不要把 `app_rtos` 前缀改成 `os`
+### 20.11 文件入口速查
 
-保留现有函数名和任务/通信对象名。前缀重命名不会自动建立解耦，当前通过目录、值接口和 CMake 依赖边界表达职责。
-
-| 看见的接口 | 属于哪里 |
+| 要开发或配置的内容 | 文件入口 |
 |---|---|
-| `app_rtos_task_init/publish_init/notify_task` | App 的任务装配和运行服务，知道 TASK_* |
-| `app_tasks_period_wait/profile_end` | App 共用调度/统计，维护应用任务统计 |
-| `app_rtos_object_queue/mutex/snapshot_*` | Os 通用 CMSIS 机制，不知道具体任务 |
-| `app_rtos_memory_read` 与 Hook | Os 的 FreeRTOS 内核适配 |
-| `app_rtos_cycles/irq_lock` | Os 的 CPU 端口 |
-| `app_rtos_can_transmit/uart_send` | 对应 CAN/log 任务的硬件端口，保留旧接口名 |
+| 任务编号名、句柄、栈、优先级、板型启用和启动条件 | App/Config/app_task_list.def |
+| 控制周期与积分步长 | App/Config/app_control_config.h |
+| 队列/FIFO 容量或 CAN 处理预算 | App/Config/app_rtos_config.h |
+| 现有模块增加队列或快照锁 | 该任务 .c 的 init/deinit |
+| 添加新对象所有者 | 模块 init/deinit + App 装配各一处直接调用 |
+| CAN 字节协议、反馈 ID | app_sentry_can.c、对应 comm 文件及车型参数 |
+| 控制规则/PID | App/sentry 对应机构 |
+| UART 发送硬件 | App/Tasks/log/app_task_log_port.c |
+| 在线阈值 | App/Config/app_rtos_module_list.def |
+| 内核堆统计或 Hook | Os/FreeRTOS/app_rtos_kernel.c |
+| CPU 测时、屏蔽或屏障 | Os/Port/app_rtos_port.c |
 
-换 MCU：适配 Core/Bsp、Drv 设备端口、CAN/log 任务端口、初始化板级装配以及 CPU 测时实现。换内核：适配 CMSIS 后端、Os 内核统计/Hook 和 tick 配置；任务层使用了 CMSIS，并非不需要 RTOS 的纯算法。
+<a id="s21"></a>
+## 21. 命名与接口约定
 
-App 纯算法与协议和值类型不调用 HAL/RTOS。DBUS 归一化在输入处理模块完成，芯片字节解析在 Drv，VOFA 通道编号在遥测发布模块，控制任务只组织输入和输出。
+### 21.1 先区分项目接口与系统 API
+
+| 名字形式 | 来源 | 阅读方法 |
+|---|---|---|
+| `osThreadNew()`、`osMessageQueuePut()`、`osDelayUntil()` | CMSIS-RTOS2 | 查标准 API 和本地 `cmsis_os2.c` 适配实现 |
+| `xPortGetFreeHeapSize()`、`vApplication*Hook()` | FreeRTOS | 查当前内核配置、调用时机及 Os 内核适配 |
+| `HAL_CAN_*()`、`HAL_UART_*()`、`HAL_TIM_*()` | STM32 HAL | 查 HAL 头文件、外设句柄和中断分发 |
+| `app_*`、`app_task_*`、`app_rtos_*`、`app_tasks_*` | 工程自定义 | 查声明所在头文件、所属目录和具体职责 |
+| `bsp_*`、`drv_*`、`lib_*` | 工程自定义 | 分别查看 Bsp、Drv、Lib 中的实现和接口约束 |
+
+`app_rtos_` 是项目命名空间的一部分。相同前缀的函数可能属于任务组织、通用 Os 机制或硬件端口，阅读时结合声明文件判断依赖范围。
+
+### 21.2 当前项目接口的职责
+
+| 接口 | 所属位置 | 作用 |
+|---|---|---|
+| `app_rtos_task_init()`、`app_rtos_publish_init()`、`app_rtos_notify_task()` | `App/Tasks/common` | 应用任务装配、启动状态和按任务编号唤醒 |
+| `app_tasks_period_wait()`、`app_tasks_profile_end()` | `App/Tasks/common` | 周期等待、任务心跳和运行统计 |
+| `app_rtos_dbus_read()`、`app_rtos_imu_read()` 等 | 对应 `App/Tasks/<任务>` | 读取模块持有的完整状态副本 |
+| `app_rtos_ctrl_send()` | `App/Tasks/can` | 交付控制结果，处理队列失败计数和 CAN 唤醒 |
+| `app_rtos_object_queue()`、`app_rtos_object_mutex()`、`app_rtos_snapshot_*()` | `Os/FreeRTOS` | 通用对象创建和锁内复制 |
+| `app_rtos_memory_read()` 与内核 Hook | `Os/FreeRTOS` | FreeRTOS 堆统计和内核诊断 |
+| `app_rtos_cycles()`、`app_rtos_irq_lock()` | `Os/Port` | CPU 测时、短临界区和内存顺序 |
+| `app_rtos_can_transmit()`、`app_rtos_uart_send()` | CAN/log 任务端口 | 硬件发送、状态确认和缓冲生命周期管理 |
+
+公共函数应说明它承担的规则：数据复制、等待方式、所有权、错误处理和调用上下文。任务创建在任务表循环中直接调用 `osThreadNew()`；业务算法通过明确的值输入和输出与任务连接。
+
+### 21.3 文件名、任务名、入口名和对象名
+
+以云台控制为例：
+
+| 名字 | 含义 |
+|---|---|
+| `App/Tasks/gimbal/app_task_gimbal.c/.h` | 任务模块的源文件与接口文件 |
+| `ctrl_gim_Task` | 写入任务属性的名字，供调试器显示 |
+| `Start_ctrl_gim_Task` | 创建线程时传入的 C 入口函数 |
+| `ctrl_gim_TaskHandle` | 保存线程 ID 的句柄变量 |
+| `TASK_GIM` | 任务表、通知和统计共同使用的稳定编号 |
+
+上述名字描述不同对象，建立联系的是任务表的一项配置。通信对象句柄由模块私有持有；对外头文件表达业务数据和使用方法。
 
 <a id="s22"></a>
 ## 22. 遇到问题先检查哪里
@@ -1782,7 +2034,7 @@ App 纯算法与协议和值类型不调用 HAL/RTOS。DBUS 归一化在输入�
 | 快照读取偶尔失败 | snapshot_failures、锁内代码长度 | 设计允许立即失败；仍要检查旧副本年龄 |
 | 设置标志后任务却不按十次处理 | 队列/FIFO真实数量、合并语义 | 标志位不是消息计数器 |
 | flags看似所有位都被置位 | 先判 `osFlagsError` | 错误返回低位也可能为1 |
-| 修改容量宏后没有变化 | 实际 `osMessageQueueNew()` 实参 | 当前部分容量仍是字面量 |
+| 修改容量宏后没有变化 | 目标板型、实际构建配置、模块创建实参 | 确认烧录的是使用该配置重新构建的固件 |
 | 栈余量看着异常大 | 是否对CMSIS结果重复乘4、是否任务未启用 | 当前接口已经返回字节 |
 | heap_free很多仍分配失败 | 连续块需求、C库堆、越界破坏、峰值 | RTOS总空闲不等于任何一次分配都成功 |
 | CubeMX生成后不再接收 | USER CODE分发、DMA/IRQ、唯一HAL回调 | 仅保留业务文件不代表接入口仍正确 |
@@ -1797,9 +2049,9 @@ App 纯算法与协议和值类型不调用 HAL/RTOS。DBUS 归一化在输入�
 
 | 文件 | 主要入口 | 职责 |
 |---|---|---|
-| `App/Tasks/common/app_rtos.c` | task_init、publish_init、init_status、wait_phase | 创建与持久启动状态；直接模块初始化 |
+| `App/Tasks/common/app_rtos.c` | task_init、publish_init、init_status、wait_phase | 展开任务清单、创建与持久启动状态；直接模块初始化 |
 | `App/Tasks/common/app_tasks.c` | period_wait、wait_event、profile_end | 调度等待和应用统计 |
-| 各 `App/Tasks/<任务>/app_task_<任务>.c` | 原任务入口、领域读写、init/deinit | 私有通信对象与工作循环 |
+| 各 `App/Tasks/<任务>/app_task_<任务>.c` | 任务入口、领域读写、init/deinit | 私有通信对象与工作循环 |
 | `App/Tasks/init/app_rtos_board.c` | board_init、ports_start、board_calibrate、sampling_start | 本板业务与硬件装配 |
 | `App/Tasks/can/app_task_can_port.c` | can_port_bind/start、can_transmit | CAN 硬件接入 |
 | `App/Tasks/log/app_task_log_port.c` | log_port_init、uart_send | UART 发送与缓冲状态确认 |
@@ -1831,17 +2083,17 @@ App 纯算法与协议和值类型不调用 HAL/RTOS。DBUS 归一化在输入�
 | `osMutexNew` | 快照锁 | 当前启用优先级继承 |
 | `osMutexAcquire/Release` | 复制临界区 | 只在任务里；必须配对；锁内不计算/收发 |
 | `osMutexDelete` | 创建失败回收 | 不在正常业务运行中删除共享锁 |
-| `osSemaphoreNew` | 保留二值示例 | 最大1、初始0 |
+| `osSemaphoreNew` | 二值信号量示例 | 最大1、初始0 |
 | `osSemaphoreAcquire/Release` | 头文件中的使用模板 | 当前不是样本/发送完成的业务通道 |
 | `osSemaphoreDelete` | 创建失败回收 | 处理对象生命周期 |
 | `osThreadFlagsSet/Wait/Clear` | 工作唤醒与 UART 完成/错误 | 标志会合并，先判错误；不要混原生通知 |
-| `osEventFlagsNew/Set/Get` | 系统启动阶段 | 保留 PORT_READY/SYS_READY/FAILED |
+| `osEventFlagsNew/Set/Get` | 系统启动阶段 | 保存 PORT_READY/SYS_READY/FAILED 状态 |
 | `osEventFlagsWait` | 实际用于各任务启动门控 | 所有等待者使用 NoClear |
 | `osEventFlagsDelete` | 创建失败回收 | 不能让其他任务还在使用失效句柄 |
 
 ### 23.3 为什么偶尔还看到 FreeRTOS 原生 API
 
-任务通信采用 CMSIS，堆统计和 Hook 的 FreeRTOS 原生接口集中在 `Os/FreeRTOS/app_rtos_kernel.c`。健康任务通过 `app_rtos_memory_read()` 读取 total/free/minimum_free，不再包含 FreeRTOS.h。
+任务通信采用 CMSIS。堆统计和 Hook 的 FreeRTOS 原生接口集中在 `Os/FreeRTOS/app_rtos_kernel.c`；健康任务通过 `app_rtos_memory_read()` 读取 total/free/minimum_free。
 
 | 原生接口/机制 | 用途 | 迁移时注意 |
 |---|---|---|
@@ -1884,18 +2136,20 @@ App 纯算法与协议和值类型不调用 HAL/RTOS。DBUS 归一化在输入�
 
 当前没有自建动态消息内存池、零拷贝大块数据所有权系统、CMSIS软件定时器控制回调、运行期任务热重启、可靠CAN事务确认、完整CPU空闲率或整片SRAM实时空闲统计。
 
-信号量示例、STOP_REQUEST位、裁判控制读取接口都保留了扩展空间；保留接口不等于对应业务已经完成。
+二值信号量用于接口示例，STOP_REQUEST 位预留，裁判快照提供读取能力。具体运行路径见各任务的等待条件和工作循环。
 
 <a id="s24"></a>
-## 24. 官方资料与继续阅读
+## 24. 源码与官方资料
 
 ### 24.1 先以当前本地实现判断工程行为
 
 - [CMSIS FreeRTOS适配层 cmsis_os2.c](D:/STM32project/BNGU_Control_System_FreeRTOS/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.c)：线程标志如何映射通知、事件组位数、stack_size换算、栈余量、队列行为。
 - [FreeRTOSConfig.h](D:/STM32project/BNGU_Control_System_FreeRTOS/Core/Inc/FreeRTOSConfig.h)：内核能力、内存与中断约束。
 - [heap_4.c](D:/STM32project/BNGU_Control_System_FreeRTOS/Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c)：当前实际分配器。
-- [原有实施说明](D:/STM32project/BNGU_Control_System_FreeRTOS/FREERTOS_IMPLEMENTATION.md)：工程使用和实施概览。
-- [实施验证记录](D:/STM32project/BNGU_Control_System_FreeRTOS/FREERTOS_VALIDATION.md)：按日期区分当前与历史构建，以及待上板事项；最新任务目录与文件名版本见第 8 节。
+- [统一任务清单](D:/STM32project/BNGU_Control_System_FreeRTOS/Self_core/App/Config/app_task_list.def)：全部任务的编号名、句柄、入口、栈、优先级、板型和启动策略。
+- [应用任务创建](D:/STM32project/BNGU_Control_System_FreeRTOS/Self_core/App/Tasks/common/app_rtos.c)：清单展开、按表创建、启动状态和对象装配。
+- [任务等待与统计](D:/STM32project/BNGU_Control_System_FreeRTOS/Self_core/App/Tasks/common/app_tasks.c)：绝对节拍、事件等待、心跳与运行计数。
+- [裁判任务](D:/STM32project/BNGU_Control_System_FreeRTOS/Self_core/App/Tasks/referee/app_task_referee.c)：软件 FIFO、处理预算和快照发布。
 
 官方网页可能对应较新的文档版本。本文通用 API 解释参考官方资料，**与当前工程相关的具体数值、限制和调用链以本地源码为准**。
 
@@ -1922,132 +2176,71 @@ App 纯算法与协议和值类型不调用 HAL/RTOS。DBUS 归一化在输入�
 5. 控制任务为什么使用绝对节拍，又为什么不能连续补跑过期计算？
 6. 改 PID、接 UART、新建任务分别应该改哪一层？
 7. 为什么 `[MEM] free` 不能代表整片 RAM，栈也不能重复计入堆占用？
-8. 为什么把 `app_rtos` 改成 `rtos` 有助阅读，但真正的可移植性仍来自接口边界？
+8. 哪些函数属于项目、CMSIS 和 HAL？更换 MCU 或 RTOS 时分别适配哪些接口？
 
 理解这几条后，再读任意任务都可以沿同一顺序：**等待条件 → 输入所有权 → 同步方式 → 本轮计算 → 输出交付 → 失败与超时 → 诊断**。
 
 <a id="s25"></a>
-## 25. 本次解耦与创建/通知简化
+## 25. Keil 调试与运行观察
 
-### 25.1 从哪里看变化
+### 25.1 在 Watch 中观察哪些变量
 
-| 原来需要跨层维护的内容 | 当前责任位置 | 后续修改范围 |
+使用带调试信息的构建，在 Watch 或相应任务/RTOS 视图中结合以下数据观察运行情况。`app_task_list.def` 是编译期清单，运行时观察它生成的 `app_rtos_task_table`、句柄变量和统计表即可。
+
+| 观察对象 | 定义位置 | 主要看什么 |
 |---|---|---|
-| Os 任务表引用 App 生命周期函数表 | App 装配直接调用模块 init/deinit | 现有模块增加对象只改该模块 |
-| queue/mutex/reset 分阶段遍历，遥测另有特殊分支 | 每模块一个初始化入口 | 模块自己的 init/deinit |
-| 启动线程广播 + 事件组查询两套状态 | 单个持久事件组直接等待 | 初始化发布、任务表 start_flags |
-| 接收/完成/错误多个通信唤醒位 | 通信任务一个 DATA_READY | 实际原因存在队列/FIFO/驱动状态 |
-| Os 混合 CPU、CAN、UART 及应用任务策略 | CPU 留 Os，CAN/log 端口归对应任务 | 换硬件时定位对应端口 |
-| 控制任务判断原始 CAN ID | 纯协议层转为 APP_CAN_CMD_* | 改协议不改任务循环 |
-| 电机索引多处重复定义 | app_motor_role.h | 角色槽位只有一套定义 |
-| 同步读取与 DMA 处理各自解释 BMI088 字节 | Drv 两个纯解析函数 | 改芯片布局只改 Drv |
-| 控制 dt、任务周期各自写常量 | app_control_config.h 派生 | 改周期同时影响调度与积分步长 |
-| 算法输出 VOFA 编号数组 | 算法提供具名遥测，telemetry 排通道 | 改显示通道只改发布映射 |
-| 健康直接调用 FreeRTOS 堆函数 | Os 内核适配返回内存记录 | 换内核只适配统计实现 |
+| `app_rtos_task_table` | `App/Tasks/common/app_rtos.c` | 名称、入口、栈字节数、优先级、`enabled`、`start_flags` |
+| 各 `*_TaskHandle` | `App/Tasks/common/app_rtos.c` | 线程是否创建；未启用任务和正常退出的初始化任务句柄为 `NULL` |
+| `app_rtos_task_stats[TASK_...]` | `App/Tasks/common/app_rtos.c` | 心跳、完成轮数、漏周期、等待错误、唤醒延迟、执行经过时间 |
+| `app_rtos_counters[COUNT_...]` | `App/Tasks/common/app_rtos.c` | 队列投递失败、非法帧、CRC、UART 和标志错误 |
+| `app_rtos_start_tick` | `App/Tasks/common/app_rtos.c` | 各控制任务共同采用的起始 tick |
+| `app_rtos_fatal_code` | `Os/FreeRTOS/app_rtos_kernel.c` | 1：分配失败；2：栈溢出；3：初始化等待异常；4：UART 中止失败 |
+| 健康 `s_health_snapshot` | `App/Tasks/health/app_task_health.c` | 启动状态、模块在线、任务存活、堆和各任务栈余量 |
+| 各模块的 `s_*` 快照与私有队列/互斥量句柄 | 对应任务 `.c` | 最新状态、时间戳、序号及对象是否有效 |
 
-### 25.2 为什么还保留少量公共函数
+文件内的 `static` 变量需要在对应文件的调试上下文中查看，或使用调试器支持的文件作用域表达式定位。优化级别较高时，局部变量可能被优化或只在部分指令区间可见；全局静态状态和诊断表适合长期观察。
 
-`app_rtos_task_init()` 是 CubeMX 到应用的单一装配入口；`app_tasks_period_wait()` 处理绝对时间、回绕和漏周期；对象 helper 统一命名和优先级继承；snapshot helper 保证只在锁内复制；通知 helper 负责句柄检查和错误计数。
+### 25.2 按启动阶段观察
 
-这些函数有实际规则，不是给 `osThreadNew()` 再套一个只有一行的 create_thread。线程创建在配置表循环里直接调用 CMSIS。
+1. 到达 `MX_FREERTOS_Init()` 时，确认内核初始化完成，并调用 `app_rtos_task_init()`。
+2. 创建完成后，看任务表的 `enabled` 和句柄：云台板 8 个、底盘板 6 个应用线程。
+3. 在 `Start_sys_init_Task()` 内，观察端口启动、PORT_READY、IMU 标定、SYS_READY 的顺序。各任务的 `cycles` 会根据自己的启动条件开始增长。
+4. 初始化结束后，`TASK_INIT` 的 `completed` 置位，退出前栈余量记录在 `final_stack_free`，句柄清空。
+5. 系统就绪后，看控制周期计数、模块有效时间和健康快照，区分“线程存在”“业务已运行”“设备数据在线”。
 
-### 25.3 仍需上板确认
+初始化期间 PORT_READY 允许通信与诊断运行，控制任务等待 SYS_READY。不能只凭某任务有心跳，就认为它已经完成了控制计算。
 
-六个现有 CMake preset（Debug、Release、GIMBAL_TEXT、GIMBAL_VOFA、CHASSIS_TEXT、CHASSIS_VOFA）完成编译链接，均无编译器警告；MDK 清单同步不等于 Keil 编译成功。
+### 25.3 沿数据流定位问题
 
-本次未执行硬件运行测试。1 ms 控制截止时间、DMA 恢复、持续通信负载和栈水位应继续通过现有健康快照与串口日志观察，不能由编译通过推出。算法参数、原急停/控制源策略和协议时序目标保持原行为。
-
-<a id="s26"></a>
-## 26. 当前目录与日常开发入口
+以 CAN 控制指令为例，按以下路径设置断点或观察字段：
 
 ```text
-Self_core/
-  App/
-    Config/                     板型、周期、容量、模块阈值
-    common/
-      data/                     各领域值类型、快照、输入/输出、槽位
-      communication/            原始 CAN 帧、云台/底盘协议
-      system/                   业务初始化和控制输入处理
-    sentry/
-      app_sentry_can.c/.h        哨兵 CAN 协议编解码
-      gimbal/ chassis/ shoot/   纯控制算法
-    Tasks/
-      common/
-        app_rtos.c/.h           应用任务配置、对象装配、启动事件
-        app_rtos_types.h        任务编号、统计、通知位
-        app_tasks.c/.h          应用等待与周期统计工具
-        app_task_monitor.c/.h   通用在线状态
-        app_task_telemetry.c/.h 控制状态与 VOFA 映射
-      init/
-        app_task_init.c/.h      初始化任务入口
-        app_rtos_board.c/.h     本板硬件及应用装配
-      can/
-        app_task_can.c/.h       CAN 工作循环和私有对象
-        app_task_can_port.c/.h  CAN 硬件接入
-      log/
-        app_task_log.c/.h       日志/内存报告/发送策略
-        app_task_log_port.c/.h  UART1 事务与完成/错误回调
-      gimbal/ chassis/ shoot/ dbus/ imu/ referee/ health/
-                                各任务自己的 .c/.h
-  Os/
-    FreeRTOS/
-      app_rtos_objects.c/.h     通用对象和快照复制
-      app_rtos_kernel.c/.h      堆统计及 FreeRTOS Hook
-    Port/
-      app_rtos_port.c           STM32 CPU 适配
-      app_rtos_time.h           测时/临界区契约
-  Drv/                          协议/设备及设备端口
-  Bsp/                          HAL 外设接入
-  Lib/                          PID/滤波/数学
+CAN 接收回调
+  → app_can_frame_t：bus / std_id / dlc / data / tick / sequence
+  → app_sentry_can_decode()：解析结果
+  → app_can_ctrl_msg_t：type / value / tick / sequence
+  → 本板控制任务：本周期收到的命令及更新掩码
+  → App 控制输入与算法输出
+  → app_ctrl_can_msg_t
+  → 编码帧、发送队列、pending 槽及硬件邮箱
 ```
 
-| 想修改什么 | 先改哪里 |
-|---|---|
-| 任务栈、优先级、板型启用和启动条件 | App/Tasks/common/app_rtos.c 的任务表 |
-| 控制周期与积分步长 | App/Config/app_control_config.h |
-| 队列/FIFO 容量或 CAN 处理预算 | App/Config/app_rtos_config.h |
-| 现有模块增加队列或快照锁 | 该任务 .c 的 init/deinit |
-| 添加新对象所有者 | 模块 init/deinit + App 装配各一处直接调用 |
-| CAN 字节协议、反馈 ID | app_sentry_can.c、对应 comm 文件及车型参数 |
-| 控制规则/PID | App/sentry 对应机构 |
-| UART 发送硬件 | App/Tasks/log/app_task_log_port.c |
-| 在线阈值 | App/Config/app_rtos_module_list.def |
-| 内核堆统计或 Hook | Os/FreeRTOS/app_rtos_kernel.c |
-| CPU 测时、屏蔽或屏障 | Os/Port/app_rtos_port.c |
+原始 ID 由帧结构体表示，控制指令用语义 `type` 和对应联合体成员表示。观察 `union` 时，只解释 `type` 指定的成员。
 
-Core 的 `MX_FREERTOS_Init()` 继续包含 `app_rtos.h` 并调用原 `app_rtos_task_init()`。业务任务不在 CubeMX 生成文件里实现。
+对 DBUS、IMU 和裁判，同样依次查看接收状态、交付载荷、解析结果、快照和业务读取。裁判字段应同时查看有效位与 `field_tick[]`；整体快照时间变化不能证明每个字段都刚更新。
 
-<a id="s27"></a>
-## 27. 保留对象、调试观察与移植范围
+### 25.4 观察周期、内存与故障计数
 
-### 27.1 对象名称和所有权
+| 目标 | 观察方式 | 解读规则 |
+|---|---|---|
+| 1 kHz / 200 Hz 控制节拍 | 比较固定内核时间区间内 `cycles` 的增量 | 正常连续运行时，云台/底盘每秒约 1000 轮，发射约 200 轮 |
+| 控制能否及时运行 | `missed`、`delay_errors`、`max_wakeup_us`、`max_execution_us` | 漏周期表示跳过过期节拍；执行经过时间包含中断、抢占和阻塞 |
+| IMU 输入是否及时 | 快照采样时间、`max_imu_age_ms`、IMU 状态和丢样计数 | 任务在运行也可能读取旧姿态，需要同时看样本年龄 |
+| 通信是否超载 | 对应 `COUNT_*` 的增量、队列积压、pending 状态 | 累计计数不自动清零，结合观察时间解释增量 |
+| 堆余量 | 健康 `heap_total/heap_free/heap_min`，TEXT 的 `[MEM]` | 是 FreeRTOS 堆统计，动态分配的任务栈已包含在这部分预算内 |
+| 栈余量 | 健康任务表、TEXT 的 `[STACK]` | 单位字节，表示历史最小剩余量；初始化任务使用退出前缓存值 |
+| 错误停机位置 | `app_rtos_fatal_code`、当前 PC、调用栈 | 根据故障码定位分配、栈、初始化等待或 UART 缓冲问题 |
 
-| 所有者 | 私有对象 |
-|---|---|
-| CAN | can1_rx_queue、can2_rx_queue、can1_tx_queue、can2_tx_queue、can_to_ctrl_queue、ctrl_to_can_queue、can_feedback_mutex |
-| DBUS | dbus_rx_queue、dbus_to_gim_mutex |
-| IMU | imu_rx_queue、imu_to_gim_mutex |
-| 发射 | dbus_to_shoot_mutex |
-| 裁判 | ref_to_chas_mutex、1024 字节 FIFO |
-| 健康 | sys_health_mutex |
-| 遥测 | ctrl_state_mutex |
-| 日志 | sys_log_queue |
-| 应用装配 | sys_init_event、app_rtos_example_binary_sem |
+TEXT 日志每秒报告内存与任务栈。VOFA 输出八通道二进制波形，内存和健康状态可在调试器中查看。
 
-任务名、入口名、句柄名、对象名、队列深度和原栈分配保留。预留板型对象及示例信号量继续创建，不因本板暂时不用而移除。
-
-### 27.2 Keil Watch 仍能看什么
-
-- `app_rtos_task_table`：栈/优先级/enabled/start_flags。
-- 原十个 `*_TaskHandle`：未启用或初始化已退出时为 NULL。
-- `app_rtos_task_stats` 与 `app_rtos_counters`：心跳、漏周期、耗时、丢包和错误。
-- `app_rtos_fatal_code`：现在定义于 Os 内核适配文件。
-- 各任务文件内的 `s_*` 快照与私有队列/锁：用文件作用域限定查看 static，优化构建可能看不到局部值。
-- 健康 `s_health_snapshot`：堆 total/free/min、各任务栈历史最小余量和在线状态。
-- CAN 指令消息：看 `.type` 和对应 `.value`；原始 ID 在 `app_can_frame_t.std_id`，控制消息不再携带 ID。
-
-### 27.3 没有消失的必要约束
-
-队列保存有限数量的值副本，快照只保存最新完整状态，线程位允许合并，启动事件不自动清除。锁内不计算不发送，ISR 不等待互斥量，DMA 缓冲在普通 SRAM 且有静态生命周期。控制仍由各任务独立 `osDelayUntil()`，TIM14 仍只服务 IMU 采样。
-
-这些是并发和数据所有权规则。当前结构把规则集中在对应机制/模块，增加业务仍需明确数据归谁、谁写谁读、何时过期，以及超载时丢弃什么。
+暂停 CPU 会改变外设接收与任务时序：DMA 可能继续写入，CAN 和串口对端也可能继续发数据。分析持续负载和最大延迟时，优先让系统连续运行并观察计数、快照和日志，再针对具体路径使用断点。

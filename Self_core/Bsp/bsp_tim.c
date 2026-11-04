@@ -1,12 +1,24 @@
 /**
  * @file    bsp_tim.c
- * @brief   定时器 BSP 实现
+ * @brief   定时器 BSP 实现：PWM、更新中断注册表与分发
  */
 #include "bsp_tim.h"
 
-/* 当前注册的基础定时器更新中断回调。 */
-static TIM_HandleTypeDef *s_period_htim;
-static bsp_tim_period_callback_t s_period_callback;
+/** @brief 一个定时器对应一个更新回调，htim 是查找键。 */
+typedef struct
+{
+    TIM_HandleTypeDef *htim;
+    bsp_tim_period_callback_t callback;
+} bsp_tim_callback_entry_t;
+
+/** @brief 静态回调表；entries[0, count) 是有效条目，不进行动态分配。 */
+typedef struct
+{
+    bsp_tim_callback_entry_t entries[BSP_TIM_REG_MAX];
+    uint32_t count;
+} bsp_tim_callback_table_t;
+
+static bsp_tim_callback_table_t s_period_table;
 
 /**
  * @brief  获取定时器实际输入时钟。
@@ -106,20 +118,102 @@ void bsp_tim_it_stop(TIM_HandleTypeDef *htim)
     (void)HAL_TIM_Base_Stop_IT(htim);
 }
 
-void bsp_tim_reg_callback(TIM_HandleTypeDef *htim, bsp_tim_period_callback_t callback)
+/**
+ * @brief  在静态表中登记或注销一个定时器更新回调。
+ * @param  htim      与 HAL 中断分发一致、生命周期覆盖注册期的句柄。
+ * @param  callback  对应处理函数，NULL 表示注销该句柄。
+ * @return HAL_OK=成功；HAL_ERROR=无效句柄；HAL_BUSY=新增时表已满。
+ * @note   只在初始化或停止目标定时器中断后修改注册；临界区保护查找和表项更新。
+ */
+HAL_StatusTypeDef bsp_tim_reg_callback(TIM_HandleTypeDef *htim,
+                                       bsp_tim_period_callback_t callback)
 {
-    s_period_htim = htim;
-    s_period_callback = callback;
+    uint32_t irq_state;
+
+    if (htim == NULL || htim->Instance == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+    irq_state = __get_PRIMASK();
+    __disable_irq();
+
+    for (uint32_t i = 0; i < s_period_table.count; i++)
+    {
+        if (s_period_table.entries[i].htim == htim)
+        {
+            if (callback != NULL)
+            {
+                s_period_table.entries[i].callback = callback;
+            }
+            else
+            {
+                /* 用末项补空位，保持有效区间连续；末槽清零后可再次使用。 */
+                s_period_table.count--;
+                s_period_table.entries[i] = s_period_table.entries[s_period_table.count];
+                s_period_table.entries[s_period_table.count] =
+                    (bsp_tim_callback_entry_t){0};
+            }
+
+            __set_PRIMASK(irq_state);
+            return HAL_OK;
+        }
+    }
+
+    if (callback == NULL)
+    {
+        /* 注销不存在的句柄没有副作用，允许调用方统一执行清理。 */
+        __set_PRIMASK(irq_state);
+        return HAL_OK;
+    }
+
+    if (s_period_table.count >= BSP_TIM_REG_MAX)
+    {
+        __set_PRIMASK(irq_state);
+        return HAL_BUSY;
+    }
+
+    s_period_table.entries[s_period_table.count] =
+        (bsp_tim_callback_entry_t){.htim = htim, .callback = callback};
+    s_period_table.count++;
+
+    __set_PRIMASK(irq_state);
+    return HAL_OK;
 }
 
 /**
- * @brief HAL 定时器更新回调的 BSP 分发入口。
+ * @brief  HAL 更新事件的 BSP 分发入口，只调用与当前句柄匹配的处理函数。
+ * @param  htim      产生更新事件的定时器句柄。
+ * @note   临界区内仅查表并取得函数指针，恢复原 PRIMASK 后执行回调。
+ * @note   本函数由 HAL 更新回调在 ISR 中调用，不负责清中断标志或维护 HAL tick。
  */
 void bsp_tim_period_elapsed_callback(TIM_HandleTypeDef *htim)
 {
-    if (htim == s_period_htim && s_period_callback)
+    bsp_tim_period_callback_t callback = NULL;
+    uint32_t irq_state;
+
+    if (htim == NULL)
     {
-        s_period_callback();
+        return;
+    }
+
+    irq_state = __get_PRIMASK();
+    __disable_irq();
+
+    for (uint32_t i = 0; i < s_period_table.count; i++)
+    {
+        if (s_period_table.entries[i].htim == htim)
+        {
+            callback = s_period_table.entries[i].callback;
+            break;
+        }
+    }
+
+    __set_PRIMASK(irq_state);
+
+    if (callback != NULL)
+    {
+        callback();
     }
 }
 

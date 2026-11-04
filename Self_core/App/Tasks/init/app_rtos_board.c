@@ -20,6 +20,7 @@
 #include "drv_buzzer.h"
 #if APP_BOARD_HAS_IMU
 static uint32_t s_sample_seq;
+static bool s_imu_timer_registered;
 #endif
 #if APP_BOARD_HAS_IMU
 /** @brief TIM14 唯一运行采样触发，只记录时间并尝试启动有界 DMA。 */
@@ -57,12 +58,19 @@ void app_rtos_board_init(void)
 #if APP_BOARD_HAS_IMU
     s_sample_seq = 0;
     drv_imu_port_bind(app_rtos_imu_receive, task_delay);
-    bsp_tim_reg_callback(&htim14, imu_tick);
+    s_imu_timer_registered = bsp_tim_reg_callback(&htim14, imu_tick) == HAL_OK;
 #endif
 }
 
 bool app_rtos_ports_start(void)
 {
+#if APP_BOARD_HAS_IMU
+    /* 必须先接好采样中断入口，注册失败由初始化任务发布失败状态。 */
+    if (!s_imu_timer_registered)
+    {
+        return false;
+    }
+#endif
 #if APP_BOARD_HAS_CAN
     if (!app_task_can_port_start())
     {

@@ -1,6 +1,6 @@
 /**
  * @file    app_rtos.c
- * @brief   显式任务配置表、对象创建、启动状态与应用诊断
+ * @brief   任务清单展开、对象创建、启动状态与应用诊断
  */
 
 #include "app_task_init.h"
@@ -34,138 +34,30 @@ _Static_assert(APP_CONTROL_FEEDBACK_PERIOD_MS >= APP_CONTROL_GIM_PERIOD_MS &&
                "Feedback period must be an integer multiple of control periods");
 static osEventFlagsId_t sys_init_event;
 static osSemaphoreId_t app_rtos_example_binary_sem; //示例仍创建，保留原名，初始计数为 0。
-/* 任务句柄：定义时为空，app_rtos_task_init() 创建线程后写入。 */
-osThreadId_t ctrl_chas_TaskHandle;
-osThreadId_t ctrl_gim_TaskHandle;
-osThreadId_t ctrl_shoot_TaskHandle;
-osThreadId_t comm_can_TaskHandle;
-osThreadId_t comm_dbus_TaskHandle;
-osThreadId_t comm_ref_TaskHandle;
-osThreadId_t comm_imu_TaskHandle;
-osThreadId_t sys_init_TaskHandle;
-osThreadId_t sys_health_TaskHandle;
-osThreadId_t sys_log_TaskHandle;
+/* 从统一清单定义句柄：静态初始化为 NULL，创建线程后写入线程 ID。 */
+#define APP_TASK(task_id, task_handle, task_entry, ...) \
+    osThreadId_t task_handle;
+#include "app_task_list.def"
+#undef APP_TASK
 
-/* 统一任务配置：创建、启动门控和健康监测均读取此表。
- * [TASK_*] 指定数组下标，.成员名 指定结构体字段，无需依赖书写顺序。
- * 修改已有任务的属性只需编辑对应项；新增任务还需补齐编号、入口、
- * 句柄和接口声明；各模块的初始化入口直接列在本文件中。
+/* 从同一清单构造任务表，创建、启动门控和健康监测共用。
+ * 前三个参数提供编号、句柄和入口，__VA_ARGS__ 填入具名属性。
+ * 任务配置在 App/Config/app_task_list.def 维护；入口声明由各任务头提供。
  */
-const app_rtos_task_desc_t app_rtos_task_table[TASK_COUNT] = {
-    /* 底盘控制 */
-    [TASK_CHAS] =
-        {
-            .name = "ctrl_chas_Task",
-            .handle = &ctrl_chas_TaskHandle,
-            .entry = Start_ctrl_chas_Task,
-            .stack = 1536,
-            .priority = osPriorityHigh,
-            .enabled = APP_BOARD_HAS_CHASSIS,
-            .start_flags = APP_RTOS_EVT_SYS_READY,
-        },
-    /* 云台控制 */
-    [TASK_GIM] =
-        {
-            .name = "ctrl_gim_Task",
-            .handle = &ctrl_gim_TaskHandle,
-            .entry = Start_ctrl_gim_Task,
-            .stack = 1536,
-            .priority = osPriorityHigh,
-            .enabled = APP_BOARD_HAS_GIMBAL,
-            .start_flags = APP_RTOS_EVT_SYS_READY,
-        },
-    /* 发射控制 */
-    [TASK_SHOOT] =
-        {
-            .name = "ctrl_shoot_Task",
-            .handle = &ctrl_shoot_TaskHandle,
-            .entry = Start_ctrl_shoot_Task,
-            .stack = 1024,
-            .priority = osPriorityAboveNormal3,
-            .enabled = APP_BOARD_HAS_SHOOT,
-            .start_flags = APP_RTOS_EVT_SYS_READY,
-        },
-    /* CAN 通信 */
-    [TASK_CAN] =
-        {
-            .name = "comm_can_Task",
-            .handle = &comm_can_TaskHandle,
-            .entry = Start_comm_can_Task,
-            .stack = 1024,
-            .priority = osPriorityHigh1,
-            .enabled = APP_BOARD_HAS_CAN,
-            .start_flags = APP_RTOS_EVT_PORT_READY,
-        },
-    /* 遥控接收 */
-    [TASK_DBUS] =
-        {
-            .name = "comm_dbus_Task",
-            .handle = &comm_dbus_TaskHandle,
-            .entry = Start_comm_dbus_Task,
-            .stack = 1024,
-            .priority = osPriorityAboveNormal2,
-            .enabled = APP_BOARD_HAS_DBUS,
-            .start_flags = APP_RTOS_EVT_PORT_READY,
-        },
-    /* 裁判通信 */
-    [TASK_REF] =
-        {
-            .name = "comm_ref_Task",
-            .handle = &comm_ref_TaskHandle,
-            .entry = Start_comm_ref_Task,
-            .stack = 1024,
-            .priority = osPriorityAboveNormal1,
-            .enabled = APP_BOARD_HAS_REFEREE,
-            .start_flags = APP_RTOS_EVT_PORT_READY,
-        },
-    /* IMU 处理 */
-    [TASK_IMU] =
-        {
-            .name = "comm_imu_Task",
-            .handle = &comm_imu_TaskHandle,
-            .entry = Start_comm_imu_Task,
-            .stack = 1536,
-            .priority = osPriorityHigh2,
-            .enabled = APP_BOARD_HAS_IMU,
-            .start_flags = APP_RTOS_EVT_SYS_READY,
-        },
-    /* 系统初始化 */
-    [TASK_INIT] =
-        {
-            .name = "sys_init_Task",
-            .handle = &sys_init_TaskHandle,
-            .entry = Start_sys_init_Task,
-            .stack = 1024,
-            .priority = osPriorityHigh3,
-            .enabled = (APP_BOARD_ALL_MASK & APP_BOARD_CURRENT_MASK) != 0,
-            .start_flags = 0,
-            .one_shot = true,
-        },
-    /* 健康监测 */
-    [TASK_HEALTH] =
-        {
-            .name = "sys_health_Task",
-            .handle = &sys_health_TaskHandle,
-            .entry = Start_sys_health_Task,
-            .stack = 768,
-            .priority = osPriorityBelowNormal,
-            .enabled = (APP_BOARD_ALL_MASK & APP_BOARD_CURRENT_MASK) != 0,
-            .start_flags = APP_RTOS_EVT_PORT_READY,
-            .diagnostic_on_failure = true,
-        },
-    /* 日志输出 */
-    [TASK_LOG] =
-        {
-            .name = "sys_log_Task",
-            .handle = &sys_log_TaskHandle,
-            .entry = Start_sys_log_Task,
-            .stack = 1024,
-            .priority = osPriorityLow,
-            .enabled = (APP_BOARD_ALL_MASK & APP_BOARD_CURRENT_MASK) != 0,
-            .start_flags = APP_RTOS_EVT_PORT_READY,
-            .diagnostic_on_failure = true,
-        },
+#define APP_TASK(task_id, task_handle, task_entry, ...) \
+    [task_id] =                                       \
+    {                                                \
+        .handle = &task_handle,                       \
+        .entry = task_entry,                          \
+        __VA_ARGS__                                  \
+    },
+
+const app_rtos_task_desc_t app_rtos_task_table[TASK_COUNT] =
+{
+#include "app_task_list.def"
 };
+
+#undef APP_TASK
 
 app_rtos_task_stats_t app_rtos_task_stats[TASK_COUNT];
 volatile uint32_t app_rtos_counters[COUNT_COUNT];

@@ -3,6 +3,7 @@
  * @brief   BMI088 六轴 IMU 驱动实现 (纯逻辑层)
  */
 #include "drv_imu.h"
+#include "drv_imu_filter_internal.h"
 #include <math.h>
 #include <string.h>
 
@@ -23,33 +24,25 @@
     do                                                                                             \
     {                                                                                              \
         if ((imu)->bus.acc_cs)                                                                     \
-        {                                                                                          \
             (imu)->bus.acc_cs(ctx, 1);                                                             \
-        }                                                                                          \
     } while (0)
 #define BMI088_ACC_CS_LOW(imu, ctx)                                                                \
     do                                                                                             \
     {                                                                                              \
         if ((imu)->bus.acc_cs)                                                                     \
-        {                                                                                          \
             (imu)->bus.acc_cs(ctx, 0);                                                             \
-        }                                                                                          \
     } while (0)
 #define BMI088_GYRO_CS_HIGH(imu, ctx)                                                              \
     do                                                                                             \
     {                                                                                              \
         if ((imu)->bus.gyro_cs)                                                                    \
-        {                                                                                          \
             (imu)->bus.gyro_cs(ctx, 1);                                                            \
-        }                                                                                          \
     } while (0)
 #define BMI088_GYRO_CS_LOW(imu, ctx)                                                               \
     do                                                                                             \
     {                                                                                              \
         if ((imu)->bus.gyro_cs)                                                                    \
-        {                                                                                          \
             (imu)->bus.gyro_cs(ctx, 0);                                                            \
-        }                                                                                          \
     } while (0)
 
 // ─── 私有函数: SPI 读写 ───────────────────────────
@@ -92,7 +85,7 @@ static void imu_delay(drv_imu_t *imu, uint32_t ms)
 {
     if (imu->bus.delay_ms)
     {
-        imu->bus.delay_ms(ms);
+        imu->bus.delay_ms(imu->bus.delay_ctx, ms);
     }
 }
 
@@ -103,27 +96,27 @@ static void imu_delay(drv_imu_t *imu, uint32_t ms)
  * @note   singularity: |2*(q0*q1 + q2*q3)| >= 0.9995 → roll = ±90°
  *         lock: pitch = 0
  */
-static void euler_xyz(drv_imu_t *imu)
+static void euler_xyz(const lib_quatf_t *q, drv_imu_euler_t *euler)
 {
-    float q0 = imu->quat.q0, q1 = imu->quat.q1;
-    float q2 = imu->quat.q2, q3 = imu->quat.q3;
+    float q0 = q->q0, q1 = q->q1;
+    float q2 = q->q2, q3 = q->q3;
 
     float sinr = 2.0f * (q0 * q1 + q2 * q3);
 
     if (fabsf(sinr) < 0.9995f)
     {
-        imu->euler.roll = asinf(sinr) * DRV_IMU_RAD_TO_DEG;
-        imu->euler.pitch = atan2f(2.0f * (q0 * q2 - q1 * q3), 1.0f - 2.0f * (q1 * q1 + q2 * q2)) *
-                           DRV_IMU_RAD_TO_DEG;
-        imu->euler.yaw = atan2f(2.0f * (q0 * q3 - q1 * q2), 1.0f - 2.0f * (q1 * q1 + q3 * q3)) *
-                         DRV_IMU_RAD_TO_DEG;
+        euler->roll = asinf(sinr) * DRV_IMU_RAD_TO_DEG;
+        euler->pitch = atan2f(2.0f * (q0 * q2 - q1 * q3), 1.0f - 2.0f * (q1 * q1 + q2 * q2)) *
+                       DRV_IMU_RAD_TO_DEG;
+        euler->yaw = atan2f(2.0f * (q0 * q3 - q1 * q2), 1.0f - 2.0f * (q1 * q1 + q3 * q3)) *
+                     DRV_IMU_RAD_TO_DEG;
     }
     else
     {
-        imu->euler.roll = copysignf(90.0f, sinr);
-        imu->euler.pitch = 0.0f; /* ← LOCKED */
-        imu->euler.yaw = atan2f(2.0f * (q1 * q2 + q0 * q3), q0 * q0 - q1 * q1 + q2 * q2 - q3 * q3) *
-                         DRV_IMU_RAD_TO_DEG;
+        euler->roll = copysignf(90.0f, sinr);
+        euler->pitch = 0.0f; /* ← LOCKED */
+        euler->yaw = atan2f(2.0f * (q1 * q2 + q0 * q3), q0 * q0 - q1 * q1 + q2 * q2 - q3 * q3) *
+                     DRV_IMU_RAD_TO_DEG;
     }
 }
 
@@ -136,26 +129,26 @@ static void euler_xyz(drv_imu_t *imu)
  *           pitch = -asin(2*(q1*q3 - q0*q2))
  *           roll  = atan2(2*(q0*q1 + q2*q3), 1 - 2*(q1² + q2²))
  */
-static void euler_zyx(drv_imu_t *imu)
+static void euler_zyx(const lib_quatf_t *q, drv_imu_euler_t *euler)
 {
-    float q0 = imu->quat.q0, q1 = imu->quat.q1;
-    float q2 = imu->quat.q2, q3 = imu->quat.q3;
+    float q0 = q->q0, q1 = q->q1;
+    float q2 = q->q2, q3 = q->q3;
 
     float sinp = 2.0f * (q1 * q3 - q0 * q2);
 
     if (fabsf(sinp) < 0.9995f)
     {
-        imu->euler.yaw = atan2f(2.0f * (q0 * q3 + q1 * q2), 1.0f - 2.0f * (q2 * q2 + q3 * q3)) *
-                         DRV_IMU_RAD_TO_DEG;
-        imu->euler.pitch = -asinf(sinp) * DRV_IMU_RAD_TO_DEG;
-        imu->euler.roll = atan2f(2.0f * (q0 * q1 + q2 * q3), 1.0f - 2.0f * (q1 * q1 + q2 * q2)) *
-                          DRV_IMU_RAD_TO_DEG;
+        euler->yaw = atan2f(2.0f * (q0 * q3 + q1 * q2), 1.0f - 2.0f * (q2 * q2 + q3 * q3)) *
+                     DRV_IMU_RAD_TO_DEG;
+        euler->pitch = -asinf(sinp) * DRV_IMU_RAD_TO_DEG;
+        euler->roll = atan2f(2.0f * (q0 * q1 + q2 * q3), 1.0f - 2.0f * (q1 * q1 + q2 * q2)) *
+                      DRV_IMU_RAD_TO_DEG;
     }
     else
     {
-        imu->euler.pitch = copysignf(90.0f, -sinp);
-        imu->euler.roll = 0.0f; /* ← LOCKED */
-        imu->euler.yaw =
+        euler->pitch = copysignf(90.0f, -sinp);
+        euler->roll = 0.0f; /* ← LOCKED */
+        euler->yaw =
             atan2f(2.0f * (q1 * q2 - q0 * q3), 2.0f * (q0 * q1 + q2 * q3)) * DRV_IMU_RAD_TO_DEG;
     }
 }
@@ -166,26 +159,26 @@ static void euler_zyx(drv_imu_t *imu)
  *         lock: yaw = 0
  *         在 roll=±90°, yaw=0 时, pitch 由 asin(2*(q1*q3 - q0*q2)) 计算
  */
-static void euler_yxz(drv_imu_t *imu)
+static void euler_yxz(const lib_quatf_t *q, drv_imu_euler_t *euler)
 {
-    float q0 = imu->quat.q0, q1 = imu->quat.q1;
-    float q2 = imu->quat.q2, q3 = imu->quat.q3;
+    float q0 = q->q0, q1 = q->q1;
+    float q2 = q->q2, q3 = q->q3;
 
     float sinr = 2.0f * (q0 * q1 + q2 * q3);
 
     if (fabsf(sinr) < 0.9995f)
     {
         /* 正常情况同 XYZ */
-        imu->euler.roll = asinf(sinr) * DRV_IMU_RAD_TO_DEG;
-        imu->euler.pitch = atan2f(2.0f * (q0 * q2 - q1 * q3), 1.0f - 2.0f * (q1 * q1 + q2 * q2)) *
-                           DRV_IMU_RAD_TO_DEG;
-        imu->euler.yaw = atan2f(2.0f * (q0 * q3 - q1 * q2), 1.0f - 2.0f * (q1 * q1 + q3 * q3)) *
-                         DRV_IMU_RAD_TO_DEG;
+        euler->roll = asinf(sinr) * DRV_IMU_RAD_TO_DEG;
+        euler->pitch = atan2f(2.0f * (q0 * q2 - q1 * q3), 1.0f - 2.0f * (q1 * q1 + q2 * q2)) *
+                       DRV_IMU_RAD_TO_DEG;
+        euler->yaw = atan2f(2.0f * (q0 * q3 - q1 * q2), 1.0f - 2.0f * (q1 * q1 + q3 * q3)) *
+                     DRV_IMU_RAD_TO_DEG;
     }
     else
     {
-        imu->euler.roll = copysignf(90.0f, sinr);
-        imu->euler.yaw = 0.0f; /* ← LOCKED */
+        euler->roll = copysignf(90.0f, sinr);
+        euler->yaw = 0.0f; /* ← LOCKED */
         /* 在 roll=±90°, yaw=0 时计算 pitch:
          * R = Rz(0) * Ry(pitch) * Rx(±90°) = Ry(pitch) * Rx(±90°)
          * R[2][0] = 2*(q1*q3 - q0*q2) = sin(pitch)
@@ -201,7 +194,7 @@ static void euler_yxz(drv_imu_t *imu)
         {
             sp = -1.0f;
         }
-        imu->euler.pitch = asinf(sp) * DRV_IMU_RAD_TO_DEG;
+        euler->pitch = asinf(sp) * DRV_IMU_RAD_TO_DEG;
     }
 }
 
@@ -209,6 +202,10 @@ static void euler_yxz(drv_imu_t *imu)
 
 void drv_imu_init(drv_imu_t *imu, const drv_imu_bus_t *bus)
 {
+    if (!imu)
+    {
+        return;
+    }
     memset(imu, 0, sizeof(*imu));
 
     if (bus)
@@ -220,6 +217,70 @@ void drv_imu_init(drv_imu_t *imu, const drv_imu_bus_t *bus)
     imu->acc_lsb_to_g = DRV_IMU_ACC_6G_LSB_TO_G;
     imu->gyro_lsb_to_radps = DRV_IMU_GYRO_2000_LSB_TO_RADPS;
     imu->quat.q0 = 1.0f;
+    imu->mounting_quat.q0 = 1.0f;
+    drv_imu_ekf_default_config(&imu->ekf_config);
+    drv_imu_vqf_default_config(&imu->vqf_config);
+    drv_imu_reset_filter(imu);
+}
+
+uint8_t drv_imu_set_algorithm(drv_imu_t *imu, drv_imu_algorithm_t algorithm)
+{
+    if (!imu || (algorithm != DRV_IMU_ALGO_MAHONY && algorithm != DRV_IMU_ALGO_EKF &&
+                 algorithm != DRV_IMU_ALGO_VQF))
+    {
+        return 0U;
+    }
+    if (imu->algorithm != algorithm)
+    {
+        imu->algorithm = algorithm;
+        drv_imu_reset_filter(imu);
+    }
+    return 1U;
+}
+
+void drv_imu_reset_filter(drv_imu_t *imu)
+{
+    if (!imu)
+    {
+        return;
+    }
+    imu_filter_quat_normalize(&imu->quat);
+    memset(imu->integral_fb, 0, sizeof(imu->integral_fb));
+    memset(&imu->filter, 0, sizeof(imu->filter));
+    switch (imu->algorithm)
+    {
+        case DRV_IMU_ALGO_EKF:
+            drv_imu_ekf_reset(imu);
+            break;
+        case DRV_IMU_ALGO_VQF:
+            drv_imu_vqf_reset(imu);
+            break;
+        default:
+            imu->algorithm = DRV_IMU_ALGO_MAHONY;
+            break;
+    }
+}
+
+void drv_imu_update(drv_imu_t *imu, float dt)
+{
+    if (!imu)
+    {
+        return;
+    }
+    switch (imu->algorithm)
+    {
+        case DRV_IMU_ALGO_MAHONY:
+            drv_imu_mahony_update(imu, dt);
+            break;
+        case DRV_IMU_ALGO_EKF:
+            drv_imu_ekf_update(imu, dt);
+            break;
+        case DRV_IMU_ALGO_VQF:
+            drv_imu_vqf_update(imu, dt);
+            break;
+        default:
+            break;
+    }
 }
 
 void drv_imu_set_euler_mode(drv_imu_t *imu, drv_imu_euler_mode_t mode)
@@ -229,6 +290,71 @@ void drv_imu_set_euler_mode(drv_imu_t *imu, drv_imu_euler_mode_t mode)
         return;
     }
     imu->euler_mode = mode;
+}
+
+uint8_t drv_imu_set_mounting(drv_imu_t *imu, float roll_deg, float pitch_deg, float yaw_deg)
+{
+    if (!imu || !isfinite(roll_deg) || !isfinite(pitch_deg) || !isfinite(yaw_deg))
+    {
+        return 0U;
+    }
+    /* 固定安装旋转用 ZYX 定义，与最终选择的欧拉角显示模式无关。 */
+    float r = 0.5f * roll_deg * IMU_FILTER_DEG_TO_RAD;
+    float p = 0.5f * pitch_deg * IMU_FILTER_DEG_TO_RAD;
+    float y = 0.5f * yaw_deg * IMU_FILTER_DEG_TO_RAD;
+    float cr = cosf(r), sr = sinf(r), cp = cosf(p), sp = sinf(p);
+    float cy = cosf(y), sy = sinf(y);
+    lib_quatf_t q = {cr * cp * cy + sr * sp * sy, sr * cp * cy - cr * sp * sy,
+                     cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy};
+    imu_filter_quat_normalize(&q);
+    imu->mounting_quat = q;
+    return 1U;
+}
+
+void drv_imu_get_body_quat(const drv_imu_t *imu, lib_quatf_t *out)
+{
+    if (!imu || !out)
+    {
+        return;
+    }
+    const lib_quatf_t inverse_mount = {imu->mounting_quat.q0, -imu->mounting_quat.q1,
+                                       -imu->mounting_quat.q2, -imu->mounting_quat.q3};
+    /* 右乘固定安装旋转的逆：传感器姿态 -> 等效水平机体姿态。
+     * 滤波器仍用原传感器系积分/观测，避免把补偿重复注入滤波状态。 */
+    imu_filter_quat_multiply(&imu->quat, &inverse_mount, out);
+}
+
+void drv_imu_get_body_gyro(const drv_imu_t *imu, lib_vec3f_t *out)
+{
+    if (!imu || !out)
+    {
+        return;
+    }
+    float sensor[3] = {imu->gyro.x - imu->gyro_offset.x, imu->gyro.y - imu->gyro_offset.y,
+                       imu->gyro.z - imu->gyro_offset.z};
+    /* 零偏与采样都在传感器系，必须先补偿，再一起旋转。
+     * 对当前绕 y 轴 -90deg 安装的板子，世界竖直角速度主要来自传感器 x 轴。
+     * 只换坐标而不扣零偏，会让 0x122 在静止时仍报告非零 yaw 角速度。 */
+    for (unsigned int i = 0U; i < 3U; ++i)
+    {
+        if (imu->algorithm == DRV_IMU_ALGO_EKF)
+        {
+            sensor[i] -= imu->filter.ekf.bias[i];
+        }
+        else if (imu->algorithm == DRV_IMU_ALGO_VQF)
+        {
+            sensor[i] -= imu->filter.vqf.bias[i];
+        }
+        else
+        {
+            sensor[i] += imu->integral_fb[i];
+        }
+    }
+    float body[3];
+    imu_filter_quat_rotate(&imu->mounting_quat, sensor, body);
+    out->x = body[0];
+    out->y = body[1];
+    out->z = body[2];
 }
 
 void drv_imu_start(drv_imu_t *imu)
@@ -272,22 +398,6 @@ void drv_imu_start(drv_imu_t *imu)
     gyro_write_reg(imu, 0x18, 0x01); /* INT3_INT4_IO_CONF */
 }
 
-/** @brief 按 BMI088 SPI 返回布局解包 ACC；无硬件访问，缓冲至少 8 字节。 */
-void drv_imu_parse_acc_raw(drv_imu_t *imu, const uint8_t bytes[8])
-{
-    imu->acc_raw.x = (int16_t)((bytes[3] << 8) | bytes[2]);
-    imu->acc_raw.y = (int16_t)((bytes[5] << 8) | bytes[4]);
-    imu->acc_raw.z = (int16_t)((bytes[7] << 8) | bytes[6]);
-}
-
-/** @brief 按 BMI088 SPI 返回布局解包 GYRO；无硬件访问，缓冲至少 7 字节。 */
-void drv_imu_parse_gyro_raw(drv_imu_t *imu, const uint8_t bytes[7])
-{
-    imu->gyro_raw.x = (int16_t)((bytes[2] << 8) | bytes[1]);
-    imu->gyro_raw.y = (int16_t)((bytes[4] << 8) | bytes[3]);
-    imu->gyro_raw.z = (int16_t)((bytes[6] << 8) | bytes[5]);
-}
-
 void drv_imu_read_acc_raw(drv_imu_t *imu)
 {
     uint8_t buf[8];
@@ -297,7 +407,9 @@ void drv_imu_read_acc_raw(drv_imu_t *imu)
     imu->bus.spi_xfer(imu->bus.spi_ctx, tx_buf, buf, 8);
     BMI088_ACC_CS_HIGH(imu, imu->bus.acc_cs_ctx);
 
-    drv_imu_parse_acc_raw(imu, buf);
+    imu->acc_raw.x = (int16_t)((buf[3] << 8) | buf[2]);
+    imu->acc_raw.y = (int16_t)((buf[5] << 8) | buf[4]);
+    imu->acc_raw.z = (int16_t)((buf[7] << 8) | buf[6]);
 }
 
 void drv_imu_read_gyro_raw(drv_imu_t *imu)
@@ -309,7 +421,9 @@ void drv_imu_read_gyro_raw(drv_imu_t *imu)
     imu->bus.spi_xfer(imu->bus.spi_ctx, tx_buf, rx_buf, 7);
     BMI088_GYRO_CS_HIGH(imu, imu->bus.gyro_cs_ctx);
 
-    drv_imu_parse_gyro_raw(imu, rx_buf);
+    imu->gyro_raw.x = (int16_t)((rx_buf[2] << 8) | rx_buf[1]);
+    imu->gyro_raw.y = (int16_t)((rx_buf[4] << 8) | rx_buf[3]);
+    imu->gyro_raw.z = (int16_t)((rx_buf[6] << 8) | rx_buf[5]);
 }
 
 void drv_imu_data_convert(drv_imu_t *imu)
@@ -336,20 +450,28 @@ void drv_imu_read_temp(drv_imu_t *imu)
 
 void drv_imu_mahony_update(drv_imu_t *imu, float dt)
 {
+    float gyr[3], acc[3];
+    if (!imu_filter_get_sample(imu, dt, gyr, acc))
+    {
+        return;
+    }
+    drv_imu_set_algorithm(imu, DRV_IMU_ALGO_MAHONY);
+
     float q0 = imu->quat.q0, q1 = imu->quat.q1;
     float q2 = imu->quat.q2, q3 = imu->quat.q3;
 
-    float gx = imu->gyro.x - imu->gyro_offset.x;
-    float gy = imu->gyro.y - imu->gyro_offset.y;
-    float gz = imu->gyro.z - imu->gyro_offset.z;
-    float ax = imu->acc.x - imu->acc_offset.x;
-    float ay = imu->acc.y - imu->acc_offset.y;
-    float az = imu->acc.z - imu->acc_offset.z;
+    float gx = gyr[0], gy = gyr[1], gz = gyr[2];
+    float ax = acc[0], ay = acc[1], az = acc[2];
 
     /* 归一化加速度计 */
     float norm = sqrtf(ax * ax + ay * ay + az * az);
-    if (norm < 1e-6f)
+    if (!imu_filter_vec_valid(acc) || !isfinite(norm) || norm < 1e-6f)
     {
+        for (unsigned int i = 0U; i < 3U; ++i)
+        {
+            gyr[i] += imu->integral_fb[i];
+        }
+        imu_filter_quat_integrate(&imu->quat, gyr, dt);
         return;
     }
     ax /= norm;
@@ -397,16 +519,22 @@ void drv_imu_mahony_update(drv_imu_t *imu, float dt)
 
 void drv_imu_quat_to_euler(drv_imu_t *imu)
 {
+    if (!imu)
+    {
+        return;
+    }
+    lib_quatf_t body_quat;
+    drv_imu_get_body_quat(imu, &body_quat);
     switch (imu->euler_mode)
     {
         case DRV_IMU_EULER_ZYX:
-            euler_zyx(imu);
+            euler_zyx(&body_quat, &imu->euler);
             break;
         case DRV_IMU_EULER_YXZ:
-            euler_yxz(imu);
+            euler_yxz(&body_quat, &imu->euler);
             break;
         default:
-            euler_xyz(imu);
+            euler_xyz(&body_quat, &imu->euler);
             break;
     }
 }
@@ -439,16 +567,21 @@ void drv_imu_calibrate_gyro(drv_imu_t *imu, uint16_t sample_count)
     imu->acc_offset.x = 0.0f;
     imu->acc_offset.y = 0.0f;
     imu->acc_offset.z = 0.0f;
+    drv_imu_reset_filter(imu);
 }
 
 void drv_imu_initial_alignment(drv_imu_t *imu)
 {
-    float ax = imu->acc.x;
-    float ay = imu->acc.y;
-    float az = imu->acc.z;
+    if (!imu)
+    {
+        return;
+    }
+    float ax = imu->acc.x - imu->acc_offset.x;
+    float ay = imu->acc.y - imu->acc_offset.y;
+    float az = imu->acc.z - imu->acc_offset.z;
 
     float norm = sqrtf(ax * ax + ay * ay + az * az);
-    if (norm < 0.1f)
+    if (!isfinite(norm) || norm < 0.1f)
     {
         return;
     }
@@ -457,7 +590,7 @@ void drv_imu_initial_alignment(drv_imu_t *imu)
     az /= norm;
 
     float initial_roll = atan2f(ay, az);
-    float initial_pitch = -asinf(ax);
+    float initial_pitch = -asinf(imu_filter_clip(ax, -1.0f, 1.0f));
     float initial_yaw = 0.0f;
 
     float cr = cosf(initial_roll * 0.5f);
@@ -472,9 +605,7 @@ void drv_imu_initial_alignment(drv_imu_t *imu)
     imu->quat.q2 = cr * sp * cy + sr * cp * sy;
     imu->quat.q3 = cr * cp * sy - sr * sp * cy;
 
-    imu->integral_fb[0] = 0.0f;
-    imu->integral_fb[1] = 0.0f;
-    imu->integral_fb[2] = 0.0f;
+    drv_imu_reset_filter(imu);
 }
 
 void drv_imu_calibrate_pose(drv_imu_t *imu)
@@ -497,9 +628,21 @@ void drv_imu_restart(drv_imu_t *imu)
     imu->quat.q1 = 0.0f;
     imu->quat.q2 = 0.0f;
     imu->quat.q3 = 0.0f;
-    imu->integral_fb[0] = 0.0f;
-    imu->integral_fb[1] = 0.0f;
-    imu->integral_fb[2] = 0.0f;
+    drv_imu_reset_filter(imu);
 
     drv_imu_start(imu);
+}
+
+void drv_imu_parse_acc_raw(drv_imu_t *imu, const uint8_t bytes[8])
+{
+    imu->acc_raw.x = (int16_t)((bytes[3] << 8) | bytes[2]);
+    imu->acc_raw.y = (int16_t)((bytes[5] << 8) | bytes[4]);
+    imu->acc_raw.z = (int16_t)((bytes[7] << 8) | bytes[6]);
+}
+
+void drv_imu_parse_gyro_raw(drv_imu_t *imu, const uint8_t bytes[7])
+{
+    imu->gyro_raw.x = (int16_t)((bytes[2] << 8) | bytes[1]);
+    imu->gyro_raw.y = (int16_t)((bytes[4] << 8) | bytes[3]);
+    imu->gyro_raw.z = (int16_t)((bytes[6] << 8) | bytes[5]);
 }

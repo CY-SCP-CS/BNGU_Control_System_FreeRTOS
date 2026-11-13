@@ -119,4 +119,10 @@ float lib_enc13_relative_rad(uint16_t raw_enc, uint16_t zero_enc);
  */
 float lib_enc_conv(float value, uint8_t dir);
 
+/** @brief 返回四个输入的最大绝对值，输入与返回值单位一致。 */
+float lib_max_abs4(float a, float b, float c, float d);
+/** @brief 将对称物理范围量化到无符号协议码；无效输入返回 0。 */
+uint16_t lib_encode_symmetric(float value, float maximum, uint16_t code_max);
+/** @brief 将非负物理范围量化到无符号协议码；无效输入返回 0。 */
+uint16_t lib_encode_unsigned(float value, float maximum, uint16_t code_max);
 #endif

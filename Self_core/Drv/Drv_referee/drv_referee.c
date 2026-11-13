@@ -101,17 +101,6 @@ static uint16_t calc_crc16(const uint8_t *data, uint16_t len)
  * @note   只包含协议数据与普通内存，不依赖 HAL 或 RTOS 对象。
  * @note   result 是本次 process 的结果；data_valid_flags 另行累计，供旧查询接口消费。
  */
-typedef struct
-{
-    drv_referee_global_t s_referee_data;            /**< 已解包数据及兼容接口尚未清除的更新位。 */
-    uint8_t s_stream_buf[REFEREE_RX_BUF_SIZE * 2U]; /**< 1024 字节线性拼帧缓存，保留未收齐尾部。 */
-    uint16_t s_stream_length;                       /**< 当前拼帧缓存中的有效字节数。 */
-    uint32_t s_frames;                              /**< CRC 正确的累计完整帧数，含未知命令。 */
-    uint32_t s_errors;                              /**< 累计帧头/全帧 CRC 错误数。 */
-    drv_referee_parse_result_t result;              /**< 本次调用的更新掩码、完整帧数和错误数。 */
-} drv_referee_context_t;
-
-static drv_referee_context_t s_referee;
 
 /* ════════════════════════════════════════════════════
  * 各命令处理器 (按 CMD_ID 分派)
@@ -124,14 +113,14 @@ static drv_referee_context_t s_referee;
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_game_status(const uint8_t *data, uint16_t len)
+static void handle_game_status(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_game_status_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.game_status, data, sizeof(drv_referee_game_status_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_GAME_STATUS;
+    memcpy(&ctx->s_referee_data.game_status, data, sizeof(drv_referee_game_status_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_GAME_STATUS;
 }
 
 /* ── 0x0002 比赛结果 ──────────────────────────── */
@@ -141,14 +130,14 @@ static void handle_game_status(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_game_result(const uint8_t *data, uint16_t len)
+static void handle_game_result(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_game_result_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.game_result, data, sizeof(drv_referee_game_result_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_GAME_RESULT;
+    memcpy(&ctx->s_referee_data.game_result, data, sizeof(drv_referee_game_result_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_GAME_RESULT;
 }
 
 /* ── 0x0003 全场机器人血量 ───────────────────── */
@@ -158,14 +147,14 @@ static void handle_game_result(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_game_robot_hp(const uint8_t *data, uint16_t len)
+static void handle_game_robot_hp(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_game_robot_hp_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.game_robot_hp, data, sizeof(drv_referee_game_robot_hp_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_GAME_ROBOT_HP;
+    memcpy(&ctx->s_referee_data.game_robot_hp, data, sizeof(drv_referee_game_robot_hp_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_GAME_ROBOT_HP;
 }
 
 /* ── 0x0101 场地事件 ──────────────────────────── */
@@ -175,14 +164,14 @@ static void handle_game_robot_hp(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_event_data(const uint8_t *data, uint16_t len)
+static void handle_event_data(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_event_data_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.event_data, data, sizeof(drv_referee_event_data_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_EVENT_DATA;
+    memcpy(&ctx->s_referee_data.event_data, data, sizeof(drv_referee_event_data_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_EVENT_DATA;
 }
 
 /* ── 0x0104 裁判警告 ──────────────────────────── */
@@ -192,14 +181,14 @@ static void handle_event_data(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_referee_warning(const uint8_t *data, uint16_t len)
+static void handle_referee_warning(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_warning_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.referee_warning, data, sizeof(drv_referee_warning_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_REFEREE_WARNING;
+    memcpy(&ctx->s_referee_data.referee_warning, data, sizeof(drv_referee_warning_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_REFEREE_WARNING;
 }
 
 /* ── 0x0105 飞镖发射信息 ──────────────────────── */
@@ -209,14 +198,14 @@ static void handle_referee_warning(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_dart_info(const uint8_t *data, uint16_t len)
+static void handle_dart_info(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_dart_info_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.dart_info, data, sizeof(drv_referee_dart_info_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_DART_INFO;
+    memcpy(&ctx->s_referee_data.dart_info, data, sizeof(drv_referee_dart_info_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_DART_INFO;
 }
 
 /* ── 0x0201 机器人性能状态 ───────────────────── */
@@ -226,7 +215,7 @@ static void handle_dart_info(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_robot_status(const uint8_t *data, uint16_t len)
+static void handle_robot_status(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     drv_referee_robot_status_t robot_status;
 
@@ -237,8 +226,8 @@ static void handle_robot_status(const uint8_t *data, uint16_t len)
     memcpy(&robot_status, data, sizeof(robot_status));
 
     /* 此处仅更新裁判任务私有解析状态；跨任务发布由裁判任务复制到互斥快照。 */
-    s_referee.s_referee_data.robot_status = robot_status;
-    s_referee.result.updated_mask |= REFEREE_FLAG_ROBOT_STATUS;
+    ctx->s_referee_data.robot_status = robot_status;
+    ctx->result.updated_mask |= REFEREE_FLAG_ROBOT_STATUS;
 }
 
 /* ── 0x0202 功率热量数据 ──────────────────────── */
@@ -248,14 +237,14 @@ static void handle_robot_status(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_power_heat(const uint8_t *data, uint16_t len)
+static void handle_power_heat(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_power_heat_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.power_heat_data, data, sizeof(drv_referee_power_heat_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_POWER_HEAT;
+    memcpy(&ctx->s_referee_data.power_heat_data, data, sizeof(drv_referee_power_heat_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_POWER_HEAT;
 }
 
 /* ── 0x0203 机器人位置 ────────────────────────── */
@@ -265,14 +254,14 @@ static void handle_power_heat(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_robot_pos(const uint8_t *data, uint16_t len)
+static void handle_robot_pos(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_robot_pos_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.robot_pos, data, sizeof(drv_referee_robot_pos_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_ROBOT_POS;
+    memcpy(&ctx->s_referee_data.robot_pos, data, sizeof(drv_referee_robot_pos_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_ROBOT_POS;
 }
 
 /* ── 0x0204 增益/减益状态 ─────────────────────── */
@@ -282,14 +271,14 @@ static void handle_robot_pos(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_buff(const uint8_t *data, uint16_t len)
+static void handle_buff(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_buff_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.buff, data, sizeof(drv_referee_buff_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_BUFF;
+    memcpy(&ctx->s_referee_data.buff, data, sizeof(drv_referee_buff_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_BUFF;
 }
 
 /* ── 0x0205 空中机器人能量 ────────────────────── */
@@ -299,14 +288,14 @@ static void handle_buff(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_air_support(const uint8_t *data, uint16_t len)
+static void handle_air_support(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_air_support_data_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.air_support, data, sizeof(drv_referee_air_support_data_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_AIR_SUPPORT;
+    memcpy(&ctx->s_referee_data.air_support, data, sizeof(drv_referee_air_support_data_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_AIR_SUPPORT;
 }
 
 /* ── 0x0206 伤害状态 ──────────────────────────── */
@@ -316,14 +305,14 @@ static void handle_air_support(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_hurt_data(const uint8_t *data, uint16_t len)
+static void handle_hurt_data(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_hurt_data_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.hurt_data, data, sizeof(drv_referee_hurt_data_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_HURT_DATA;
+    memcpy(&ctx->s_referee_data.hurt_data, data, sizeof(drv_referee_hurt_data_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_HURT_DATA;
 }
 
 /* ── 0x0207 实时射击数据 ──────────────────────── */
@@ -333,14 +322,14 @@ static void handle_hurt_data(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_shoot_data(const uint8_t *data, uint16_t len)
+static void handle_shoot_data(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_shoot_data_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.shoot_data, data, sizeof(drv_referee_shoot_data_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_SHOOT_DATA;
+    memcpy(&ctx->s_referee_data.shoot_data, data, sizeof(drv_referee_shoot_data_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_SHOOT_DATA;
 }
 
 /* ── 0x0208 弹丸许可量 ────────────────────────── */
@@ -350,14 +339,15 @@ static void handle_shoot_data(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_projectile_allowance(const uint8_t *data, uint16_t len)
+static void handle_projectile_allowance(drv_referee_context_t *ctx, const uint8_t *data,
+                                        uint16_t len)
 {
     if (len < sizeof(drv_referee_projectile_allowance_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.projectile, data, sizeof(drv_referee_projectile_allowance_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_PROJECTILE_ALLOWANCE;
+    memcpy(&ctx->s_referee_data.projectile, data, sizeof(drv_referee_projectile_allowance_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_PROJECTILE_ALLOWANCE;
 }
 
 /* ── 0x0209 RFID状态 ──────────────────────────── */
@@ -367,14 +357,14 @@ static void handle_projectile_allowance(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_rfid_status(const uint8_t *data, uint16_t len)
+static void handle_rfid_status(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_rfid_status_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.rfid_status, data, sizeof(drv_referee_rfid_status_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_RFID_STATUS;
+    memcpy(&ctx->s_referee_data.rfid_status, data, sizeof(drv_referee_rfid_status_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_RFID_STATUS;
 }
 
 /* ── 0x020A 飞镖选手端指令 ────────────────────── */
@@ -384,14 +374,14 @@ static void handle_rfid_status(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_dart_client_cmd(const uint8_t *data, uint16_t len)
+static void handle_dart_client_cmd(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_dart_client_cmd_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.dart_client_cmd, data, sizeof(drv_referee_dart_client_cmd_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_DART_CLIENT_CMD;
+    memcpy(&ctx->s_referee_data.dart_client_cmd, data, sizeof(drv_referee_dart_client_cmd_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_DART_CLIENT_CMD;
 }
 
 /* ── 0x020B 地面机器人位置 ────────────────────── */
@@ -401,15 +391,14 @@ static void handle_dart_client_cmd(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_ground_robot_pos(const uint8_t *data, uint16_t len)
+static void handle_ground_robot_pos(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_ground_robot_pos_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.ground_robot_pos, data,
-           sizeof(drv_referee_ground_robot_pos_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_GROUND_ROBOT_POS;
+    memcpy(&ctx->s_referee_data.ground_robot_pos, data, sizeof(drv_referee_ground_robot_pos_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_GROUND_ROBOT_POS;
 }
 
 /* ── 0x020C 雷达标记进度 ──────────────────────── */
@@ -419,14 +408,14 @@ static void handle_ground_robot_pos(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_radar_mark(const uint8_t *data, uint16_t len)
+static void handle_radar_mark(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_radar_mark_data_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.radar_mark, data, sizeof(drv_referee_radar_mark_data_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_RADAR_MARK;
+    memcpy(&ctx->s_referee_data.radar_mark, data, sizeof(drv_referee_radar_mark_data_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_RADAR_MARK;
 }
 
 /* ── 0x020D 哨兵信息 ──────────────────────────── */
@@ -436,14 +425,14 @@ static void handle_radar_mark(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_sentry_info(const uint8_t *data, uint16_t len)
+static void handle_sentry_info(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_sentry_info_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.sentry_info, data, sizeof(drv_referee_sentry_info_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_SENTRY_INFO;
+    memcpy(&ctx->s_referee_data.sentry_info, data, sizeof(drv_referee_sentry_info_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_SENTRY_INFO;
 }
 
 /* ── 0x020E 雷达站信息 ────────────────────────── */
@@ -453,14 +442,14 @@ static void handle_sentry_info(const uint8_t *data, uint16_t len)
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_radar_info(const uint8_t *data, uint16_t len)
+static void handle_radar_info(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
     if (len < sizeof(drv_referee_radar_info_t))
     {
         return;
     }
-    memcpy(&s_referee.s_referee_data.radar_info, data, sizeof(drv_referee_radar_info_t));
-    s_referee.result.updated_mask |= REFEREE_FLAG_RADAR_INFO;
+    memcpy(&ctx->s_referee_data.radar_info, data, sizeof(drv_referee_radar_info_t));
+    ctx->result.updated_mask |= REFEREE_FLAG_RADAR_INFO;
 }
 
 /* ── 0x0301 机器人交互 (含UI绘制) ────────────────
@@ -473,8 +462,9 @@ static void handle_radar_info(const uint8_t *data, uint16_t len)
  * @param  len          载荷长度，至少 6 字节。
  * @note   当前 UI、哨兵和雷达交互分支仅有框架，不发布业务字段或更新位。
  */
-static void handle_robot_interaction(const uint8_t *data, uint16_t len)
+static void handle_robot_interaction(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
+    (void)ctx;
     if (len < 6)
     {
         return; /* 至少需要 data_cmd_id + sender_id + receiver_id */
@@ -525,13 +515,13 @@ static void handle_robot_interaction(const uint8_t *data, uint16_t len)
 
 /**
  * @brief  按命令码分派一份已经通过帧校验的完整裁判数据。
- * @param  buffer  完整帧地址，必须由 drv_referee_process() 先验证 SOF、长度和 CRC。
+ * @param  buffer  完整帧地址，必须由 drv_referee_process(ctx) 先验证 SOF、长度和 CRC。
  * @param  length  已验证的完整帧长度，范围 PROTOCOL_MIN_FRAME_LEN~REFEREE_RX_BUF_SIZE。
  * @return 0=已知命令完成分派，-2=未知命令；未知命令仍计为 CRC 正确的完整帧。
  * @note   帧头和全帧校验统一在流式入口执行，此处不重复计算 CRC。
  * @note   过短的业务载荷由各 handle_* 忽略；实际字段更新以 result.updated_mask 为准。
  */
-static int parse_referee_packet(const uint8_t *buffer, uint32_t length)
+static int parse_referee_packet(drv_referee_context_t *ctx, const uint8_t *buffer, uint32_t length)
 {
     const uint8_t *cmd_ptr = buffer + PROTOCOL_HEADER_LEN; /* 命令码位置 */
     uint16_t cmd_id;
@@ -543,67 +533,67 @@ static int parse_referee_packet(const uint8_t *buffer, uint32_t length)
     switch (cmd_id)
     {
         case CMD_GAME_STATUS:
-            handle_game_status(data_ptr, data_len);
+            handle_game_status(ctx, data_ptr, data_len);
             break;
         case CMD_GAME_RESULT:
-            handle_game_result(data_ptr, data_len);
+            handle_game_result(ctx, data_ptr, data_len);
             break;
         case CMD_GAME_ROBOT_HP:
-            handle_game_robot_hp(data_ptr, data_len);
+            handle_game_robot_hp(ctx, data_ptr, data_len);
             break;
         case CMD_EVENT_DATA:
-            handle_event_data(data_ptr, data_len);
+            handle_event_data(ctx, data_ptr, data_len);
             break;
         case CMD_REFEREE_WARNING:
-            handle_referee_warning(data_ptr, data_len);
+            handle_referee_warning(ctx, data_ptr, data_len);
             break;
         case CMD_DART_INFO:
-            handle_dart_info(data_ptr, data_len);
+            handle_dart_info(ctx, data_ptr, data_len);
             break;
         case CMD_ROBOT_STATUS:
-            handle_robot_status(data_ptr, data_len);
+            handle_robot_status(ctx, data_ptr, data_len);
             break;
         case CMD_POWER_HEAT_DATA:
-            handle_power_heat(data_ptr, data_len);
+            handle_power_heat(ctx, data_ptr, data_len);
             break;
         case CMD_ROBOT_POS:
-            handle_robot_pos(data_ptr, data_len);
+            handle_robot_pos(ctx, data_ptr, data_len);
             break;
         case CMD_BUFF_DATA:
-            handle_buff(data_ptr, data_len);
+            handle_buff(ctx, data_ptr, data_len);
             break;
         case CMD_AIR_SUPPORT_DATA:
-            handle_air_support(data_ptr, data_len);
+            handle_air_support(ctx, data_ptr, data_len);
             break;
         case CMD_HURT_DATA:
-            handle_hurt_data(data_ptr, data_len);
+            handle_hurt_data(ctx, data_ptr, data_len);
             break;
         case CMD_SHOOT_DATA:
-            handle_shoot_data(data_ptr, data_len);
+            handle_shoot_data(ctx, data_ptr, data_len);
             break;
         case CMD_PROJECTILE_ALLOWANCE:
-            handle_projectile_allowance(data_ptr, data_len);
+            handle_projectile_allowance(ctx, data_ptr, data_len);
             break;
         case CMD_RFID_STATUS:
-            handle_rfid_status(data_ptr, data_len);
+            handle_rfid_status(ctx, data_ptr, data_len);
             break;
         case CMD_DART_CLIENT_CMD:
-            handle_dart_client_cmd(data_ptr, data_len);
+            handle_dart_client_cmd(ctx, data_ptr, data_len);
             break;
         case CMD_GROUND_ROBOT_POS:
-            handle_ground_robot_pos(data_ptr, data_len);
+            handle_ground_robot_pos(ctx, data_ptr, data_len);
             break;
         case CMD_RADAR_MARK_DATA:
-            handle_radar_mark(data_ptr, data_len);
+            handle_radar_mark(ctx, data_ptr, data_len);
             break;
         case CMD_SENTRY_INFO:
-            handle_sentry_info(data_ptr, data_len);
+            handle_sentry_info(ctx, data_ptr, data_len);
             break;
         case CMD_RADAR_INFO:
-            handle_radar_info(data_ptr, data_len);
+            handle_radar_info(ctx, data_ptr, data_len);
             break;
         case CMD_ROBOT_INTERACTION:
-            handle_robot_interaction(data_ptr, data_len);
+            handle_robot_interaction(ctx, data_ptr, data_len);
             break;
         default:
             return -2; /* 未知命令ID */
@@ -618,11 +608,11 @@ static int parse_referee_packet(const uint8_t *buffer, uint32_t length)
 
 /**
  * @brief  清零裁判解析状态、拼帧缓存和累计统计。
- * @note   接收启动前调用一次；运行时只需丢弃半帧时使用 drv_referee_reset_stream()。
+ * @note   接收启动前调用一次；运行时只需丢弃半帧时使用 drv_referee_reset_stream(ctx)。
  */
-void drv_referee_init(void)
+void drv_referee_init(drv_referee_context_t *ctx)
 {
-    memset(&s_referee, 0, sizeof(s_referee));
+    memset(ctx, 0, sizeof(*ctx));
 }
 
 /**
@@ -634,26 +624,27 @@ void drv_referee_init(void)
  * @note   CRC 正确的未知命令也计入 frames；实际业务更新以 updated_mask 为准。
  * @note   相同字段多次更新可在每次返回中置位；旧 get_and_clear_flags() 仍独立累计到显式清除。
  */
-drv_referee_parse_result_t drv_referee_process(const uint8_t *data, uint16_t len)
+drv_referee_parse_result_t drv_referee_process(drv_referee_context_t *ctx, const uint8_t *data,
+                                               uint16_t len)
 {
     /* 本次结果与兼容接口的待消费更新位分开，避免同一字段连续更新时漏报。 */
-    memset(&s_referee.result, 0, sizeof(s_referee.result));
+    memset(&ctx->result, 0, sizeof(ctx->result));
     if (!data || len == 0U || len > REFEREE_RX_BUF_SIZE)
     {
-        return s_referee.result;
+        return ctx->result;
     }
-    if (s_referee.s_stream_length + len > sizeof(s_referee.s_stream_buf))
+    if (ctx->s_stream_length + len > sizeof(ctx->s_stream_buf))
     {
-        s_referee.s_stream_length = 0;
+        ctx->s_stream_length = 0;
     }
 
     /* 线性拼帧缓存只保存尚未消费的字节，与 ISR 到任务的环形 FIFO 独立。 */
-    memcpy(s_referee.s_stream_buf + s_referee.s_stream_length, data, len);
-    s_referee.s_stream_length += len;
+    memcpy(ctx->s_stream_buf + ctx->s_stream_length, data, len);
+    ctx->s_stream_length += len;
     uint16_t offset = 0;
-    while (s_referee.s_stream_length - offset >= PROTOCOL_HEADER_LEN)
+    while (ctx->s_stream_length - offset >= PROTOCOL_HEADER_LEN)
     {
-        const uint8_t *frame = s_referee.s_stream_buf + offset;
+        const uint8_t *frame = ctx->s_stream_buf + offset;
 
         /* 先校验帧头，再信任其中的长度；普通噪声按字节跳过。 */
         if (frame[0] != PROTOCOL_SOF ||
@@ -661,7 +652,7 @@ drv_referee_parse_result_t drv_referee_process(const uint8_t *data, uint16_t len
         {
             if (frame[0] == PROTOCOL_SOF)
             {
-                s_referee.result.errors++;
+                ctx->result.errors++;
             }
             offset++;
             continue;
@@ -674,7 +665,7 @@ drv_referee_parse_result_t drv_referee_process(const uint8_t *data, uint16_t len
             offset++;
             continue;
         }
-        if ((uint32_t)(s_referee.s_stream_length - offset) < frame_length)
+        if ((uint32_t)(ctx->s_stream_length - offset) < frame_length)
         {
             break; /* 帧头可信但全帧未到齐，从当前 SOF 起保留到下一次输入。 */
         }
@@ -684,24 +675,24 @@ drv_referee_parse_result_t drv_referee_process(const uint8_t *data, uint16_t len
         memcpy(&received_crc, frame + frame_length - PROTOCOL_CRC16_LEN, sizeof(received_crc));
         if (calc_crc16(frame, (uint16_t)(frame_length - PROTOCOL_CRC16_LEN)) != received_crc)
         {
-            s_referee.result.errors++;
+            ctx->result.errors++;
             offset++;
             continue;
         }
-        (void)parse_referee_packet(frame, frame_length);
-        s_referee.result.frames++;
+        (void)parse_referee_packet(ctx, frame, frame_length);
+        ctx->result.frames++;
         offset += (uint16_t)frame_length;
     }
 
     /* 移除已消费前缀；保留完整的未收齐尾部，供下次片段继续拼接。 */
-    s_referee.s_stream_length -= offset;
-    memmove(s_referee.s_stream_buf, s_referee.s_stream_buf + offset, s_referee.s_stream_length);
+    ctx->s_stream_length -= offset;
+    memmove(ctx->s_stream_buf, ctx->s_stream_buf + offset, ctx->s_stream_length);
 
     /* 累计查询接口继续可用；只有显式 get_and_clear_flags() 才清除待消费更新位。 */
-    s_referee.s_referee_data.data_valid_flags |= s_referee.result.updated_mask;
-    s_referee.s_frames += s_referee.result.frames;
-    s_referee.s_errors += s_referee.result.errors;
-    return s_referee.result;
+    ctx->s_referee_data.data_valid_flags |= ctx->result.updated_mask;
+    ctx->s_frames += ctx->result.frames;
+    ctx->s_errors += ctx->result.errors;
+    return ctx->result;
 }
 
 /**
@@ -709,9 +700,9 @@ drv_referee_parse_result_t drv_referee_process(const uint8_t *data, uint16_t len
  * @return 静态存储的只读视图；后续 process/init 会改写其内容。
  * @note   仅裁判任务直接读取并复制；其他任务应通过 app_rtos_ref_read() 获取互斥快照。
  */
-const drv_referee_global_t *drv_referee_get_data(void)
+const drv_referee_global_t *drv_referee_get_data(drv_referee_context_t *ctx)
 {
-    return &s_referee.s_referee_data;
+    return &ctx->s_referee_data;
 }
 
 /**
@@ -719,10 +710,10 @@ const drv_referee_global_t *drv_referee_get_data(void)
  * @return REFEREE_FLAG_* 按位或组成的掩码。
  * @note   不清除业务数据或 process 返回的本次结果；新任务直接使用返回结果，旧调用者仍可消费累计更新位。
  */
-uint32_t drv_referee_get_and_clear_flags(void)
+uint32_t drv_referee_get_and_clear_flags(drv_referee_context_t *ctx)
 {
-    uint32_t flags = s_referee.s_referee_data.data_valid_flags;
-    s_referee.s_referee_data.data_valid_flags = 0;
+    uint32_t flags = ctx->s_referee_data.data_valid_flags;
+    ctx->s_referee_data.data_valid_flags = 0;
     return flags;
 }
 
@@ -732,9 +723,9 @@ uint32_t drv_referee_get_and_clear_flags(void)
  * @return 1=至少有一位已更新，0=均未更新。
  * @note   不消费更新位，也不判断在线状态；调用 get_and_clear_flags() 后相应位会清除。
  */
-int drv_referee_is_data_updated(uint32_t flag)
+int drv_referee_is_data_updated(drv_referee_context_t *ctx, uint32_t flag)
 {
-    return (s_referee.s_referee_data.data_valid_flags & flag) ? 1 : 0;
+    return (ctx->s_referee_data.data_valid_flags & flag) ? 1 : 0;
 }
 
 /**
@@ -768,9 +759,9 @@ const char *drv_referee_parse_error_string(int result)
  * @note   仅清零线性拼帧长度，不清空已解析业务数据、字段标志、帧数或错误数。
  * @note   任务发现 FIFO 溢出/接收错误后，必须先调用本函数，再处理复位后取出的新字节。
  */
-void drv_referee_reset_stream(void)
+void drv_referee_reset_stream(drv_referee_context_t *ctx)
 {
-    s_referee.s_stream_length = 0;
+    ctx->s_stream_length = 0;
 }
 
 /**
@@ -778,9 +769,9 @@ void drv_referee_reset_stream(void)
  * @return 本地 uint32_t 累计帧数；包含未知命令，不等于协议帧头 8 位 seq。
  * @note   由裁判任务读取，初始化时清零；统计已接受的帧，不保证所有帧都更新了业务字段。
  */
-uint32_t drv_referee_get_frame_count(void)
+uint32_t drv_referee_get_frame_count(drv_referee_context_t *ctx)
 {
-    return s_referee.s_frames;
+    return ctx->s_frames;
 }
 
 /**
@@ -788,7 +779,43 @@ uint32_t drv_referee_get_frame_count(void)
  * @return 帧头 CRC8 或全帧 CRC16 失败的累计次数；普通噪声和越界长度跳过不计数。
  * @note   初始化时清零；UART 错误、FIFO 丢弃由任务集成层另行计数。
  */
-uint32_t drv_referee_get_error_count(void)
+uint32_t drv_referee_get_error_count(drv_referee_context_t *ctx)
 {
-    return s_referee.s_errors;
+    return ctx->s_errors;
+}
+
+uint16_t drv_referee_build_frame(uint8_t *frame, uint16_t capacity, uint16_t cmd_id,
+                                 const void *payload, uint16_t payload_len, uint8_t seq)
+
+{
+    uint32_t frame_len = (uint32_t)payload_len + 9U;
+
+    if (frame == NULL)
+    {
+        return 0U;
+    }
+
+    if (payload_len > 0U && payload == NULL)
+    {
+        return 0U;
+    }
+
+    if (frame_len > capacity)
+    {
+        return 0U;
+    }
+
+    frame[0] = 0xA5;
+    memcpy(frame + 1U, &payload_len, sizeof(payload_len));
+    frame[3] = seq;
+    frame[4] = calc_crc8(frame, 4U);
+    memcpy(frame + 5U, &cmd_id, sizeof(cmd_id));
+    if (payload_len > 0U)
+    {
+        memcpy(frame + 7U, payload, payload_len);
+    }
+    uint16_t crc16 = calc_crc16(frame, 7U + payload_len);
+    memcpy(frame + 7U + payload_len, &crc16, sizeof(crc16));
+
+    return (uint16_t)frame_len;
 }

@@ -125,3 +125,42 @@ float lib_enc_conv(float value, uint8_t dir)
             return 0.0f;
     }
 }
+
+float lib_max_abs4(float a, float b, float c, float d)
+{
+    return fmaxf(fmaxf(fabsf(a), fabsf(b)), fmaxf(fabsf(c), fabsf(d)));
+}
+
+uint16_t lib_encode_symmetric(float value, float maximum, uint16_t code_max)
+{
+    if (!isfinite(value) || !isfinite(maximum) || maximum <= 0.0f)
+    {
+        return 0U;
+    }
+    if (value <= -maximum)
+    {
+        return 0U;
+    }
+    if (value >= maximum)
+    {
+        return code_max;
+    }
+    return (uint16_t)((value / maximum * 0.5f + 0.5f) * (float)code_max);
+}
+
+uint16_t lib_encode_unsigned(float value, float maximum, uint16_t code_max)
+{
+    if (!isfinite(value) || !isfinite(maximum) || maximum <= 0.0f)
+    {
+        return 0U;
+    }
+    if (value <= 0.0f)
+    {
+        return 0U;
+    }
+    if (value >= maximum)
+    {
+        return code_max;
+    }
+    return (uint16_t)(value / maximum * (float)code_max);
+}

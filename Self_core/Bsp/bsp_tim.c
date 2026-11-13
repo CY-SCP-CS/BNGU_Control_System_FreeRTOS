@@ -125,8 +125,7 @@ void bsp_tim_it_stop(TIM_HandleTypeDef *htim)
  * @return HAL_OK=成功；HAL_ERROR=无效句柄；HAL_BUSY=新增时表已满。
  * @note   只在初始化或停止目标定时器中断后修改注册；临界区保护查找和表项更新。
  */
-HAL_StatusTypeDef bsp_tim_reg_callback(TIM_HandleTypeDef *htim,
-                                       bsp_tim_period_callback_t callback)
+HAL_StatusTypeDef bsp_tim_reg_callback(TIM_HandleTypeDef *htim, bsp_tim_period_callback_t callback)
 {
     uint32_t irq_state;
 
@@ -151,8 +150,7 @@ HAL_StatusTypeDef bsp_tim_reg_callback(TIM_HandleTypeDef *htim,
                 /* 用末项补空位，保持有效区间连续；末槽清零后可再次使用。 */
                 s_period_table.count--;
                 s_period_table.entries[i] = s_period_table.entries[s_period_table.count];
-                s_period_table.entries[s_period_table.count] =
-                    (bsp_tim_callback_entry_t){0};
+                s_period_table.entries[s_period_table.count] = (bsp_tim_callback_entry_t){0};
             }
 
             __set_PRIMASK(irq_state);

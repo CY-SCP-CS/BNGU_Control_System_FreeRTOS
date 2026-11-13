@@ -22,6 +22,7 @@
 #include "stm32f4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "i2c.h"
 #include "bsp_uart.h"
 /* USER CODE END Includes */
 
@@ -401,6 +402,22 @@ void USART6_IRQHandler(void)
 void DMA1_Stream1_IRQHandler(void) { HAL_DMA_IRQHandler(&hdma_usart3_rx); }
 void CAN1_SCE_IRQHandler(void) { HAL_CAN_IRQHandler(&hcan1); }
 void CAN2_SCE_IRQHandler(void) { HAL_CAN_IRQHandler(&hcan2); }
+/** @brief IST8310 data-ready IRQ; only records arrival time. */
+void EXTI3_IRQHandler(void)
+{
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_3);
+}
+/** @brief Dispatch I2C3 event to HAL; processing continues in the IMU task. */
+void I2C3_EV_IRQHandler(void)
+{
+    HAL_I2C_EV_IRQHandler(&hi2c3);
+}
+/** @brief Dispatch I2C3 error; the magnetic state machine performs recovery. */
+void I2C3_ER_IRQHandler(void)
+{
+    HAL_I2C_ER_IRQHandler(&hi2c3);
+}
+
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */

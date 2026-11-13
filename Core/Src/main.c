@@ -28,6 +28,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "i2c.h"
 #include "bsp_tim.h"
 
 /* USER CODE END Includes */
@@ -104,6 +105,7 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM10_Init();
   MX_TIM14_Init();
+  MX_I2C3_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */

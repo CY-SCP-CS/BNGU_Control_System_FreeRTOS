@@ -309,3 +309,40 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
         }
     }
 }
+
+HAL_StatusTypeDef bsp_uart_claim_rx(UART_HandleTypeDef *uart, bsp_uart_rx_event_callback_t callback)
+{
+    if (!uart || !callback)
+    {
+        return HAL_ERROR;
+    }
+    for (unsigned i = 0; i < 3; i++)
+    {
+        if (s_events[i].uart == uart)
+        {
+            return s_events[i].callback == callback ? HAL_OK : HAL_BUSY;
+        }
+    }
+    for (unsigned i = 0; i < 3; i++)
+    {
+        if (!s_events[i].uart)
+        {
+            s_events[i].uart = uart;
+            s_events[i].callback = callback;
+            return HAL_OK;
+        }
+    }
+    return HAL_ERROR;
+}
+
+void bsp_uart_release_rx(UART_HandleTypeDef *uart, bsp_uart_rx_event_callback_t callback)
+{
+    for (unsigned i = 0; i < 3; i++)
+    {
+        if (s_events[i].uart == uart && s_events[i].callback == callback)
+        {
+            s_events[i].uart = NULL;
+            s_events[i].callback = NULL;
+        }
+    }
+}

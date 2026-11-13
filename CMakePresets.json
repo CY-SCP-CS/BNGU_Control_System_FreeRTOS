@@ -30,7 +30,8 @@
             "inherits": "Debug",
             "cacheVariables": {
                 "APP_BOARD": "GIMBAL",
-                "APP_LOG_MODE": "VOFA"
+                "APP_LOG_MODE": "VOFA",
+                "APP_ROBOT": "SENTRY"
             }
         },
         {
@@ -38,7 +39,8 @@
             "inherits": "Debug",
             "cacheVariables": {
                 "APP_BOARD": "GIMBAL",
-                "APP_LOG_MODE": "TEXT"
+                "APP_LOG_MODE": "TEXT",
+                "APP_ROBOT": "SENTRY"
             }
         },
         {
@@ -46,7 +48,8 @@
             "inherits": "Debug",
             "cacheVariables": {
                 "APP_BOARD": "CHASSIS",
-                "APP_LOG_MODE": "VOFA"
+                "APP_LOG_MODE": "VOFA",
+                "APP_ROBOT": "SENTRY"
             }
         },
         {
@@ -54,7 +57,36 @@
             "inherits": "Debug",
             "cacheVariables": {
                 "APP_BOARD": "CHASSIS",
-                "APP_LOG_MODE": "TEXT"
+                "APP_LOG_MODE": "TEXT",
+                "APP_ROBOT": "SENTRY"
+            }
+        },
+        {
+            "name": "NAVIGATION_TEXT",
+            "inherits": "CHASSIS_TEXT",
+            "cacheVariables": {
+                "APP_ROBOT": "NAVIGATION"
+            }
+        },
+        {
+            "name": "NAVIGATION_VOFA",
+            "inherits": "CHASSIS_VOFA",
+            "cacheVariables": {
+                "APP_ROBOT": "NAVIGATION"
+            }
+        },
+        {
+            "name": "CHASSIS_UI_REFEREE",
+            "inherits": "CHASSIS_TEXT",
+            "cacheVariables": {
+                "APP_UI": "REFEREE"
+            }
+        },
+        {
+            "name": "CHASSIS_UI_DEMO",
+            "inherits": "CHASSIS_TEXT",
+            "cacheVariables": {
+                "APP_UI": "DEMO"
             }
         }
     ],
@@ -82,6 +114,22 @@
         {
             "name": "CHASSIS_TEXT",
             "configurePreset": "CHASSIS_TEXT"
+        },
+        {
+            "name": "NAVIGATION_TEXT",
+            "configurePreset": "NAVIGATION_TEXT"
+        },
+        {
+            "name": "NAVIGATION_VOFA",
+            "configurePreset": "NAVIGATION_VOFA"
+        },
+        {
+            "name": "CHASSIS_UI_REFEREE",
+            "configurePreset": "CHASSIS_UI_REFEREE"
+        },
+        {
+            "name": "CHASSIS_UI_DEMO",
+            "configurePreset": "CHASSIS_UI_DEMO"
         }
     ]
 }

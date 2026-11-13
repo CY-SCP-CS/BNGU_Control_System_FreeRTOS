@@ -39,10 +39,10 @@ HAL_StatusTypeDef bsp_spi_transceive_dma(SPI_HandleTypeDef *hspi, const uint8_t 
  * @param  hspi      SPI 句柄
  * @param  complete  DMA 完成回调
  * @param  error     DMA 错误回调
- * @note   当前只有一个注册槽，绑定 SPI1 后再启动传输；回调可能由 ISR 或任务收尾调用。
+ * @note   每个硬件总线独立注册，共 3 槽，绑定 SPI1 后再启动传输；回调可能由 ISR 或任务收尾调用。
  */
-void bsp_spi_reg_dma_callbacks(SPI_HandleTypeDef *hspi, bsp_spi_callback_t complete,
-                               bsp_spi_callback_t error);
+HAL_StatusTypeDef bsp_spi_reg_dma_callbacks(SPI_HandleTypeDef *hspi, bsp_spi_callback_t complete,
+                                            bsp_spi_callback_t error);
 
 /** @brief 异步中止 SPI DMA。 
  * @param  hspi  SPI 句柄
@@ -65,6 +65,6 @@ void bsp_spi_poll_dma(SPI_HandleTypeDef *hspi);
  * @param  callback     状态检查唤醒函数，NULL 时不通知。
  * @note   仅保存函数指针，不创建任务；当前由 IMU 端口转换成线程标志。
  */
-void bsp_spi_reg_dma_wake_callback(bsp_spi_callback_t callback);
+void bsp_spi_reg_dma_wake_callback(SPI_HandleTypeDef *hspi, bsp_spi_callback_t callback);
 
 #endif

@@ -7,6 +7,7 @@
  */
 #ifndef DRV_REFEREE_H
 #define DRV_REFEREE_H
+#define REFEREE_TX_BUF_SIZE 309U
 
 #include "lib_typedef.h"
 
@@ -259,10 +260,10 @@ typedef struct DRV_REFEREE_PACKED
 
 typedef struct DRV_REFEREE_PACKED
 {
-    uint16_t data_cmd_id; /**< 数据命令ID                           */
-    uint16_t sender_id;   /**< 发送者机器人ID                       */
-    uint16_t receiver_id; /**< 接收者机器人ID (0xFFFF=广播)         */
-    uint8_t user_data[];  /**< 用户数据段(变长)                     */
+    uint16_t data_cmd_id;                   /**< 数据命令ID                           */
+    uint16_t sender_id;                     /**< 发送者机器人ID                       */
+    uint16_t receiver_id;                   /**< 接收者机器人ID (0xFFFF=广播)         */
+    uint8_t user_data[REFEREE_TX_BUF_SIZE]; /**< 用户数据段(变长)                     */
 } drv_referee_interaction_data_t;
 
 /* ── 交互子类型: 图层删除 ── */
@@ -371,7 +372,7 @@ typedef struct
 #define REFEREE_FLAG_RADAR_INFO (1UL << 19)
 
 /**
- * @brief  一次 drv_referee_process() 调用的结果，按值返回，不持有内部缓冲指针。
+ * @brief  一次 drv_referee_process(drv_referee_context_t *ctx, ) 调用的结果，按值返回，不持有内部缓冲指针。
  * @note   三个成员都是本次调用的结果，非累计值；相同字段连续更新时也会重复置位。
  * @note   内部工作状态使用自然对齐，本结构不属于串口线上协议，无需 packed。
  */
@@ -382,6 +383,19 @@ typedef struct
     uint32_t errors;       /**< 本次帧头 CRC8/全帧 CRC16 失败次数，普通噪声跳过不计数。 */
 } drv_referee_parse_result_t;
 
+/** @brief 单实例解析状态；调用者静态分配，仅拥有者串行访问，无内部锁。
+ * @note 不同实例缓存、累计计数和解析结果独立；重启流不清除已解析字段。
+ */
+typedef struct
+{
+    drv_referee_global_t s_referee_data;            /**< 已解包数据及兼容接口尚未清除的更新位。 */
+    uint8_t s_stream_buf[REFEREE_RX_BUF_SIZE * 2U]; /**< 1024 字节线性拼帧缓存，保留未收齐尾部。 */
+    uint16_t s_stream_length;                       /**< 当前拼帧缓存中的有效字节数。 */
+    uint32_t s_frames;                              /**< CRC 正确的累计完整帧数，含未知命令。 */
+    uint32_t s_errors;                              /**< 累计帧头/全帧 CRC 错误数。 */
+    drv_referee_parse_result_t result;              /**< 本次调用的更新掩码、完整帧数和错误数。 */
+} drv_referee_context_t;
+
 // ════════════════════════════════════════════════════
 // 接口声明
 // ════════════════════════════════════════════════════
@@ -389,28 +403,28 @@ typedef struct
 /**
  * @brief  初始化裁判协议状态
  */
-void drv_referee_init(void);
+void drv_referee_init(drv_referee_context_t *ctx);
 
 /**
  * @brief  获取裁判系统全局数据
  * @return 裁判系统数据指针
  * @note   仅裁判任务借用该静态地址；跨任务读取任务层发布的互斥快照，不要长期保存此指针。
  */
-const drv_referee_global_t *drv_referee_get_data(void);
+const drv_referee_global_t *drv_referee_get_data(drv_referee_context_t *ctx);
 
 /**
  * @brief  获取并清除数据更新标志
  * @return 更新标志位掩码
  * @note   只取走更新位，不清除业务字段或 process 返回的本次结果；仅由裁判任务串行消费。
  */
-uint32_t drv_referee_get_and_clear_flags(void);
+uint32_t drv_referee_get_and_clear_flags(drv_referee_context_t *ctx);
 
 /**
  * @brief  检查指定数据是否已更新
  * @param  flag  标志位 (如 REFEREE_FLAG_ROBOT_STATUS)
  * @return 1=已更新  0=未更新
  */
-int drv_referee_is_data_updated(uint32_t flag);
+int drv_referee_is_data_updated(drv_referee_context_t *ctx, uint32_t flag);
 
 /**
  * @brief  解析错误码转字符串
@@ -428,51 +442,39 @@ const char *drv_referee_parse_error_string(int result);
  * @note   CRC 正确的未知命令也计入 frames；实际业务更新以 updated_mask 为准。
  * @note   相同字段多次更新可在每次返回中置位；旧 get_and_clear_flags() 仍独立累计到显式清除。
  */
-drv_referee_parse_result_t drv_referee_process(const uint8_t *data, uint16_t len);
+drv_referee_parse_result_t drv_referee_process(drv_referee_context_t *ctx, const uint8_t *data,
+                                               uint16_t len);
 
-/**
- * @brief  裁判接收字节片段的交付回调。
- * @note   两个参数依次为只读字节地址和字节数；中断上下文同步调用，接收者必须在返回前完成复制。
- * @note   (NULL,0) 表示接收错误；一次 DMA 回绕可调用两次，片段不保证是完整协议帧。
- */
-typedef void (*drv_referee_bytes_callback_t)(const uint8_t *, uint16_t);
-/* Callback runs in IRQ context: (NULL,0) signals a receive error. */
-/**
- * @brief  绑定裁判字节流交付入口。
- * @param  callback     新增字节交付函数，当前绑定 app_rtos_ref_push_isr；NULL 时停止上交。
- * @note   在启动接收前调用；回调立即复制数据，不能保留循环 DMA 缓冲的地址。
- */
-void drv_referee_port_bind(drv_referee_bytes_callback_t callback);
-/** @brief 初始化 USART6 DMA + IDLE 裁判系统接收。
- * @note   初始化解析状态、注册 USART6 事件并启动 512 字节循环 DMA。
- * @return 1=DMA 启动成功，0=启动失败。
- * @note   初始化任务调用；循环模式由 CubeMX 的 USART6 RX DMA 配置决定，本函数不修改 DMA 模式。
- */
-uint8_t drv_referee_port_init(void);
-/**
- * @brief  在 UART 错误导致接收停止后，丢弃解析半帧并重启循环 DMA。
- * @return 1=接收仍运行或重启成功，0=本次重启失败。
- * @note   由裁判任务调用，未发生错误时直接返回；不解析新数据，也不主动读取 DMA 片段。
- * @note   短临界区串行化 DMA 复位与接收 ISR；已解析的业务数据和累计计数保留。
- */
-uint8_t drv_referee_port_poll(void);
 /**
  * @brief  丢弃解析器尚未收齐的半帧，下一次从新的字节片段重新同步。
  * @note   仅清零线性拼帧长度，不清空已解析业务数据、字段标志、帧数或错误数。
  * @note   任务发现 FIFO 溢出/接收错误后，必须先调用本函数，再处理复位后取出的新字节。
  */
-void drv_referee_reset_stream(void);
+void drv_referee_reset_stream(drv_referee_context_t *ctx);
 /**
  * @brief  读取已通过 CRC 的完整帧累计数。
  * @return 本地 uint32_t 累计帧数；包含未知命令，不等于协议帧头 8 位 seq。
  * @note   由裁判任务读取，初始化时清零；统计已接受的帧，不保证所有帧都更新了业务字段。
  */
-uint32_t drv_referee_get_frame_count(void);
+uint32_t drv_referee_get_frame_count(drv_referee_context_t *ctx);
 /**
  * @brief  读取解析路径累计错误数。
  * @return 帧头 CRC8 或全帧 CRC16 失败的累计次数；普通噪声和越界长度跳过不计数。
  * @note   初始化时清零；UART 错误、FIFO 丢弃由任务集成层另行计数。
  */
-uint32_t drv_referee_get_error_count(void);
+uint32_t drv_referee_get_error_count(drv_referee_context_t *ctx);
 
+/**
+ * @brief Build a CRC8/CRC16 referee frame without sending it.
+ * @param[out] frame Output buffer, at least capacity B; unchanged on invalid input.
+ * @param[in] capacity Available output capacity in B, must fit payload_len + 9.
+ * @param[in] cmd_id Wire command ID.
+ * @param[in] payload Borrowed payload of payload_len B; NULL allowed only for zero length.
+ * @param[in] payload_len Payload length in B.
+ * @param[in] seq Caller-owned wire sequence.
+ * @return Complete frame length in B, or 0 on invalid argument/capacity.
+ * @note Pure function; output must not overlap payload. Does not retain pointers.
+ */
+uint16_t drv_referee_build_frame(uint8_t *frame, uint16_t capacity, uint16_t cmd_id,
+                                 const void *payload, uint16_t payload_len, uint8_t seq);
 #endif /* DRV_REFEREE_H */

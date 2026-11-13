@@ -1,110 +1,144 @@
-/**
- * @file    drv_dbus_port.c
- * @brief   DBUS 硬件接收适配：USART3 普通 DMA 双缓冲与完整帧交付。
- * @note    ISR 只收集完整 18 字节帧；解包、范围检查和快照发布由 comm_dbus_Task 完成。
+/** @file drv_dbus_port.c
+ * @brief 多实例 固定 DBUS 帧双缓冲接收；回调只交付，任务解析。
  */
-#include "drv_dbus.h"
-#include "bsp_uart.h"
+#include "drv_dbus_port.h"
 #include <string.h>
+static drv_dbus_port_t *s_ports[3];
 
-/* 两块静态普通 SRAM 缓冲：一块由 DMA 写入，另一块在回调期间只读交付；不是动态内存池。 */
-static uint8_t s_rx[2][18];
-/* 当前准备接收的缓冲索引，收帧后异或 1 切换到另一块。 */
-static uint8_t s_index;
-/* ISR 出错时清零；任务看到未运行状态后执行恢复。 */
-static volatile uint8_t s_started;
-static drv_dbus_frame_callback_t s_deliver;
-
-/**
- * @brief  绑定 DBUS 完整帧与接收错误的上交入口。
- * @param  callback     完整帧交付函数，NULL 表示不交付。
- * @note   在启动接收前由 RTOS 端口层绑定；当前回调复制到 dbus_rx_queue 并设置任务标志。
- */
-void drv_dbus_port_bind(drv_dbus_frame_callback_t callback)
+/** @brief 查找 UART 对应的已注册接收实例。
+ * @param[in] uart 事件所属 UART。
+ * @return 实例；未注册返回 NULL。
+ * @note 注册表只在启动/停止时写，ISR 只读。 */
+static drv_dbus_port_t *find_port(UART_HandleTypeDef *uart)
 {
-    s_deliver = callback;
+    for (unsigned i = 0; i < 3; i++)
+    {
+        if (s_ports[i] && s_ports[i]->uart == uart)
+        {
+            return s_ports[i];
+        }
+    }
+    return NULL;
 }
 
-/**
- * @brief  使用当前活动缓冲启动下一轮固定 18 字节 DMA。
- * @return 1=HAL 启动成功，0=启动失败；同时更新 s_started。
- * @note   由初始化、接收事件或任务恢复路径调用；调用者负责与 ISR 串行访问接收状态。
- */
-static uint8_t restart(void)
+/** @brief 启动当前实例缓冲的 DMA 接收。
+ * @param[in,out] port 已配置实例，非 NULL。
+ * @return 1=已启动，0=启动失败；更新 started。
+ * @note 调用者与 ISR 串行化，不等待。 */
+static uint8_t restart(drv_dbus_port_t *port)
 {
-    s_started = bsp_uart_rx_dma(&huart3, s_rx[s_index], 18) == HAL_OK;
-    return s_started;
+    port->started = bsp_uart_rx_dma(port->uart, port->dma[port->position], 18) == HAL_OK;
+    return port->started;
 }
 
-/**
- * @brief  在 USART3 接收事件中筛选完整帧、切换缓冲并重启接收。
- * @param  uart         USART3 句柄。
- * @param  event        BSP_UART_RX_HALF/FULL/IDLE/ERROR 事件。
- * @note   半满事件忽略；完整帧才上交，短帧停止后丢弃并开始下一轮，不跨 IDLE 拼接短帧。
- * @note   TC 后紧接着产生且字节数为 0 的 IDLE 会忽略，避免重复交付。
- * @note   先用另一块缓冲重启 DMA，再同步回调交付旧缓冲；回调返回后不得继续引用旧地址。
- */
+/** @brief 分发 UART 接收事件并同步交付新增有效字节。
+ * @param[in] uart 事件所属 UART。
+ * @param[in] event BSP_UART_* 事件。
+ * @return 无返回值。错误通过 receive(ERROR) 报告。
+ * @note ISR 有界执行；DBUS 短帧丢弃；循环 DMA 先尾后头，HT/TC/IDLE 去重。 */
 static void rx_event(UART_HandleTypeDef *uart, uint32_t event)
 {
-    if (event == BSP_UART_RX_HALF)
+    drv_dbus_port_t *port = find_port(uart);
+    if (!port)
     {
         return;
     }
     if (event == BSP_UART_ERROR)
     {
-        s_started = 0;
-        if (s_deliver)
-        {
-            s_deliver(NULL);
-        }
+        port->started = 0;
+        port->receive(port->context, DRV_IO_ERROR, NULL, 0);
         return;
     }
-    /* NDTR 为剩余未接收字节数，因此 18-NDTR 为本轮已收到的字节数。 */
+    if (event == BSP_UART_RX_HALF)
+    {
+        return;
+    }
     uint16_t count = 18 - bsp_uart_get_rx_dma_remain(uart);
     if (event == BSP_UART_RX_IDLE && !count)
     {
-        return; /* TC 后的空 IDLE 不重复交付。 */
+        return;
     }
     (void)bsp_uart_stop_dma(uart);
-    uint8_t index = s_index;
-    s_index ^= 1;
-    (void)restart();
-    if (count == 18 && s_deliver)
+    unsigned previous = port->position;
+    port->position ^= 1U;
+    (void)restart(port);
+    if (count == 18)
     {
-        s_deliver(s_rx[index]);
+        port->receive(port->context, DRV_IO_DATA, port->dma[previous], 18);
     }
 }
 
-/**
- * @brief  复位接收双缓冲，注册 USART3 事件并启动第一轮 18 字节 DMA。
- * @return 1=DMA 启动成功，0=启动失败。
- * @note   初始化任务调用；USART3 的波特率、DMA 和中断配置由 CubeMX 外设初始化先完成。
- */
-uint8_t drv_dbus_port_init(void)
+uint8_t drv_dbus_port_init(drv_dbus_port_t *port, UART_HandleTypeDef *uart,
+                           drv_dbus_receive_t receive, void *context)
 {
-    s_index = 0;
-    memset(s_rx, 0, sizeof(s_rx));
-    bsp_uart_reg_rx_event_callback(&huart3, rx_event);
-    bsp_uart_clear_idle(&huart3);
-    bsp_uart_enable_idle_it(&huart3);
-    return restart();
+    if (!port || !uart || !receive)
+    {
+        return 0;
+    }
+    if (find_port(uart))
+    {
+        return 0;
+    }
+    int free_slot = -1;
+    for (unsigned i = 0; i < 3; i++)
+    {
+        if (!s_ports[i])
+        {
+            free_slot = (int)i;
+            break;
+        }
+    }
+    if (free_slot < 0 || bsp_uart_claim_rx(uart, rx_event) != HAL_OK)
+    {
+        return 0;
+    }
+    memset(port, 0, sizeof(*port));
+    port->uart = uart;
+    port->receive = receive;
+    port->context = context;
+    s_ports[free_slot] = port;
+    bsp_uart_clear_idle(uart);
+    bsp_uart_enable_idle_it(uart);
+    return restart(port);
 }
 
-/**
- * @brief  在接收停止后尝试重新启动 USART3 DMA。
- * @return 1=接收已运行或重启成功，0=本次重启失败。
- * @note   由 DBUS 任务定期调用；短临界区防止与接收中断同时改变 DMA 状态，本函数不解包。
- */
-uint8_t drv_dbus_port_poll(void)
+uint8_t drv_dbus_port_poll(drv_dbus_port_t *port)
 {
-    if (s_started)
+    if (!port || !port->uart)
+    {
+        return 0;
+    }
+    if (port->started)
     {
         return 1;
     }
     uint32_t key = __get_PRIMASK();
     __disable_irq();
-    (void)bsp_uart_stop_dma(&huart3);
-    uint8_t ok = restart();
+    (void)bsp_uart_stop_dma(port->uart);
+    port->position = 0;
+    uint8_t ok = restart(port);
     __set_PRIMASK(key);
     return ok;
+}
+
+void drv_dbus_port_stop(drv_dbus_port_t *port)
+{
+    if (!port || !port->uart || find_port(port->uart) != port)
+    {
+        return;
+    }
+    uint32_t key = __get_PRIMASK();
+    __disable_irq();
+    (void)bsp_uart_stop_dma(port->uart);
+    bsp_uart_release_rx(port->uart, rx_event);
+    for (unsigned i = 0; i < 3; i++)
+    {
+        if (s_ports[i] == port)
+        {
+            s_ports[i] = NULL;
+        }
+    }
+    port->started = 0;
+    port->uart = NULL;
+    __set_PRIMASK(key);
 }

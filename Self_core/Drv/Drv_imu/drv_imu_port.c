@@ -4,7 +4,7 @@
  * @note    硬件节拍只启动采样；完整原始样本交给 IMU 任务解析并运行姿态算法。
  * @note    DMA 完成与中止采用非等待状态推进，任务负责延后收尾和错误恢复。
  */
-#include "drv_imu.h"
+#include "drv_imu_port.h"
 #include "bsp_spi.h"
 #include "bsp_gpio.h"
 #include "bsp_tim.h"
@@ -20,24 +20,58 @@ enum
     ABORTING      /**< 中止请求已发出，等待 DMA 使能位清除再复位。 */
 };
 
-/* 调试状态：state 为上面的状态机，busy/error 分别计数；start_tick 使用 HAL 毫秒时基。 */
-struct
+/** @brief 物理 SPI 的唯一进行中事务；不同设备共享总线时忙即拒绝，不自动排队。 */
+static struct
 {
-    volatile uint32_t state, busy_count, error_count;
-    uint32_t start_tick;
-    drv_imu_dma_sample_t sample;
-} drv_imu_port_debug;
+    SPI_HandleTypeDef *spi;
+    drv_imu_port_t *owner;
+} s_owners[3];
 
-/* Both TX and RX DMA storage lives in ordinary SRAM, with static lifetime. */
-/* Burst from CHIP_ID through the last data register, keeping two DMA phases.
- * ACC has command + dummy + registers 0x00..0x17; GYRO has no dummy byte.
- * The IDs distinguish a responding device from a successful DMA of 0x00/0xFF. */
-/* 从 CHIP_ID 起连续读寄存器；ACC 含命令与 dummy，GYRO 只含命令，回调再抽取轴数据。 */
-static uint8_t s_acc_tx[26] = {0x80}, s_gyro_tx[9] = {0x80};
-static uint8_t s_acc_rx[26], s_gyro_rx[9];
-static drv_imu_sample_callback_t s_deliver;
-static drv_imu_delay_t s_delay;
-static uint8_t s_init_io_failed;
+/** @brief 查找事件所属采集实例。
+ * @param[in] spi 硬件 SPI。
+ * @return 进行中实例；无事务为 NULL。
+ * @note ISR 只读，owner 在短临界区或初始化设置。 */
+static drv_imu_port_t *owner(SPI_HandleTypeDef *spi)
+{
+    for (unsigned i = 0; i < 3; i++)
+    {
+        if (s_owners[i].spi == spi)
+        {
+            return s_owners[i].owner;
+        }
+    }
+    return NULL;
+}
+
+/** @brief 取得/释放总线完整采样的独占权。
+ * @param[in,out] p 实例，非 NULL。
+ * @param[in] acquire 1=尝试占用；0=仅释放自己的事务。
+ * @return 1=成功；0=表满或其他实例正在占用。
+ * @note 调用者串行化；不排队、不抢占其他实例。 */
+static uint8_t own(drv_imu_port_t *p, uint8_t acquire)
+{
+    for (unsigned i = 0; i < 3; i++)
+    {
+        if (s_owners[i].spi == p->config.spi || !s_owners[i].spi)
+        {
+            s_owners[i].spi = p->config.spi;
+            if (acquire)
+            {
+                if (s_owners[i].owner && s_owners[i].owner != p)
+                {
+                    return 0;
+                }
+                s_owners[i].owner = p;
+            }
+            else if (s_owners[i].owner == p)
+            {
+                s_owners[i].owner = NULL;
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
 
 /**
  * @brief  把 SPI 未完成收尾状态转换为上层任务唤醒请求。
@@ -46,10 +80,15 @@ static uint8_t s_init_io_failed;
  */
 static void wake_task(SPI_HandleTypeDef *spi_handle)
 {
-    (void)spi_handle;
-    if (s_deliver)
+    drv_imu_port_t *p = owner(spi_handle);
+    if (!p)
     {
-        s_deliver(NULL);
+        return;
+    }
+    (void)spi_handle;
+    if (p->receive)
+    {
+        p->receive(p->context, DRV_IO_SERVICE, NULL);
     }
 }
 
@@ -59,11 +98,6 @@ static void wake_task(SPI_HandleTypeDef *spi_handle)
  * @param  delay        初始化/标定延时函数；RTOS 适配传入可调度等待。
  * @note   必须在初始化和采样启动前绑定；未提供 delay 时退回 BSP 毫秒延时。
  */
-void drv_imu_port_bind(drv_imu_sample_callback_t callback, drv_imu_delay_t delay)
-{
-    s_deliver = callback;
-    s_delay = delay;
-}
 
 /**
  * @brief  设置 BMI088 PA4 加速度计片选电平。
@@ -73,8 +107,8 @@ void drv_imu_port_bind(drv_imu_sample_callback_t callback, drv_imu_delay_t delay
  */
 static void acc_cs(void *ctx, uint8_t state)
 {
-    (void)ctx;
-    bsp_gpio_write_pin(GPIOA, GPIO_PIN_4, state);
+    drv_imu_port_t *p = ctx;
+    bsp_gpio_write_pin(p->config.acc_gpio, p->config.acc_pin, state);
 }
 
 /**
@@ -85,8 +119,8 @@ static void acc_cs(void *ctx, uint8_t state)
  */
 static void gyro_cs(void *ctx, uint8_t state)
 {
-    (void)ctx;
-    bsp_gpio_write_pin(GPIOB, GPIO_PIN_0, state);
+    drv_imu_port_t *p = ctx;
+    bsp_gpio_write_pin(p->config.gyro_gpio, p->config.gyro_pin, state);
 }
 
 /**
@@ -94,11 +128,12 @@ static void gyro_cs(void *ctx, uint8_t state)
  * @param  ms           等待时长，单位 ms。
  * @note   RTOS 环境绑定到任务延时；若未绑定则调用 BSP 延时，不应在采样 ISR 中调用。
  */
-void drv_imu_port_delay_ms(uint32_t ms)
+static void drv_imu_port_delay_ms(void *ctx, uint32_t ms)
 {
-    if (s_delay)
+    drv_imu_port_t *p = ctx;
+    if (p->delay)
     {
-        s_delay(ms);
+        p->delay(p->delay_context, ms);
     }
     else
     {
@@ -116,10 +151,10 @@ void drv_imu_port_delay_ms(uint32_t ms)
  */
 static void spi(void *ctx, const uint8_t *tx, uint8_t *rx, uint16_t len)
 {
-    (void)ctx;
-    if (HAL_SPI_TransmitReceive(&hspi1, (uint8_t *)tx, rx, len, 10) != HAL_OK)
+    drv_imu_port_t *p = ctx;
+    if (HAL_SPI_TransmitReceive(p->config.spi, (uint8_t *)tx, rx, len, 10) != HAL_OK)
     {
-        s_init_io_failed = 1;
+        p->init_io_failed = 1;
     }
 }
 
@@ -128,12 +163,13 @@ static void spi(void *ctx, const uint8_t *tx, uint8_t *rx, uint16_t len)
  * @return 1=可安全启动下一阶段，0=仍在收尾或尚未空闲。
  * @note   使用前必须已初始化 SPI1 和其 RX/TX DMA 句柄；不轮询等待。
  */
-static uint8_t ready(void)
+static uint8_t ready(drv_imu_port_t *p)
 {
-    return hspi1.State == HAL_SPI_STATE_READY && hspi1.hdmarx->State == HAL_DMA_STATE_READY &&
-           hspi1.hdmatx->State == HAL_DMA_STATE_READY &&
-           !(hspi1.hdmarx->Instance->CR & DMA_SxCR_EN) &&
-           !(hspi1.hdmatx->Instance->CR & DMA_SxCR_EN);
+    return p->config.spi->State == HAL_SPI_STATE_READY &&
+           p->config.spi->hdmarx->State == HAL_DMA_STATE_READY &&
+           p->config.spi->hdmatx->State == HAL_DMA_STATE_READY &&
+           !(p->config.spi->hdmarx->Instance->CR & DMA_SxCR_EN) &&
+           !(p->config.spi->hdmatx->Instance->CR & DMA_SxCR_EN);
 }
 
 /**
@@ -143,27 +179,33 @@ static uint8_t ready(void)
  */
 static void finished_error(SPI_HandleTypeDef *spi_handle)
 {
-    (void)spi_handle;
-    acc_cs(NULL, 1);
-    gyro_cs(NULL, 1);
-    drv_imu_port_debug.error_count++;
-    drv_imu_port_debug.state = IDLE;
-    if (s_deliver)
+    drv_imu_port_t *p = owner(spi_handle);
+    if (!p)
     {
-        s_deliver(NULL);
+        return;
     }
+    (void)spi_handle;
+    acc_cs(p, 1);
+    gyro_cs(p, 1);
+    p->error_count++;
+    p->state = IDLE;
+    if (p->receive)
+    {
+        p->receive(p->context, DRV_IO_ERROR, NULL);
+    }
+    (void)own(p, 0);
 }
 
 /**
  * @brief  进入 ABORTING 并发起非等待的 SPI DMA 中止。
  * @note   若中止接口失败且硬件已经空闲则直接完成错误收尾；其余情况由后续 poll 推进。
  */
-static void abort_dma(void)
+static void abort_dma(drv_imu_port_t *p)
 {
-    drv_imu_port_debug.state = ABORTING;
-    if (bsp_spi_abort_dma(&hspi1) != HAL_OK && ready())
+    p->state = ABORTING;
+    if (bsp_spi_abort_dma(p->config.spi) != HAL_OK && ready(p))
     {
-        finished_error(&hspi1);
+        finished_error(p->config.spi);
     }
 }
 
@@ -172,13 +214,13 @@ static void abort_dma(void)
  * @return 1=GYRO DMA 启动成功，0=启动失败且已请求中止。
  * @note   由完成回调或任务恢复路径调用；失败不交付半份样本。
  */
-static uint8_t start_gyro(void)
+static uint8_t start_gyro(drv_imu_port_t *p)
 {
-    drv_imu_port_debug.state = GYRO;
-    gyro_cs(NULL, 0);
-    if (bsp_spi_transceive_dma(&hspi1, s_gyro_tx, s_gyro_rx, sizeof(s_gyro_tx)) != HAL_OK)
+    p->state = GYRO;
+    gyro_cs(p, 0);
+    if (bsp_spi_transceive_dma(p->config.spi, p->gyro_tx, p->gyro_rx, sizeof(p->gyro_tx)) != HAL_OK)
     {
-        abort_dma();
+        abort_dma(p);
         return 0;
     }
     return 1;
@@ -193,34 +235,40 @@ static uint8_t start_gyro(void)
  */
 static void completed(SPI_HandleTypeDef *spi_handle)
 {
-    (void)spi_handle;
-    if (drv_imu_port_debug.state == ACC)
+    drv_imu_port_t *p = owner(spi_handle);
+    if (!p)
     {
-        acc_cs(NULL, 1);
-        memcpy(drv_imu_port_debug.sample.acc, s_acc_rx, 2);
-        memcpy(drv_imu_port_debug.sample.acc + 2, s_acc_rx + 20, 6);
-        drv_imu_port_debug.sample.acc_chip_id = s_acc_rx[2];
-        drv_imu_port_debug.state = GYRO_PENDING;
-        if (ready())
+        return;
+    }
+    (void)spi_handle;
+    if (p->state == ACC)
+    {
+        acc_cs(p, 1);
+        memcpy(p->sample.acc, p->acc_rx, 2);
+        memcpy(p->sample.acc + 2, p->acc_rx + 20, 6);
+        p->sample.acc_chip_id = p->acc_rx[2];
+        p->state = GYRO_PENDING;
+        if (ready(p))
         {
-            (void)start_gyro();
+            (void)start_gyro(p);
         }
-        else if (s_deliver)
+        else if (p->receive)
         {
-            s_deliver(NULL);
+            p->receive(p->context, DRV_IO_SERVICE, NULL);
         }
     }
-    else if (drv_imu_port_debug.state == GYRO)
+    else if (p->state == GYRO)
     {
-        gyro_cs(NULL, 1);
-        drv_imu_port_debug.sample.gyro[0] = s_gyro_rx[0];
-        memcpy(drv_imu_port_debug.sample.gyro + 1, s_gyro_rx + 3, 6);
-        drv_imu_port_debug.sample.gyro_chip_id = s_gyro_rx[1];
-        if (s_deliver)
+        gyro_cs(p, 1);
+        p->sample.gyro[0] = p->gyro_rx[0];
+        memcpy(p->sample.gyro + 1, p->gyro_rx + 3, 6);
+        p->sample.gyro_chip_id = p->gyro_rx[1];
+        if (p->receive)
         {
-            s_deliver(&drv_imu_port_debug.sample);
+            p->receive(p->context, DRV_IO_DATA, &p->sample);
         }
-        drv_imu_port_debug.state = IDLE;
+        p->state = IDLE;
+        (void)own(p, 0);
     }
 }
 
@@ -231,12 +279,42 @@ static void completed(SPI_HandleTypeDef *spi_handle)
  * @note   SPI1、PA4(ACC_CS)、PB0(GYRO_CS) 为当前硬件映射；进行 3000 次陀螺零偏采样。
  * @note   本函数不启动 TIM14；标定完成后，系统初始化流程另行启动严格采样节拍。
  */
-uint8_t drv_imu_port_init(drv_imu_t *imu)
+uint8_t drv_imu_port_init(drv_imu_port_t *p, drv_imu_t *imu, const drv_imu_port_config_t *config,
+                          drv_imu_receive_t receive, void *context, drv_imu_delay_t delay,
+                          void *delay_context)
 {
-    memset(&drv_imu_port_debug, 0, sizeof(drv_imu_port_debug));
-    s_init_io_failed = 0;
-    drv_imu_bus_t bus = {
-        .spi_xfer = spi, .acc_cs = acc_cs, .gyro_cs = gyro_cs, .delay_ms = drv_imu_port_delay_ms};
+    if (!p || !imu || !config || !config->spi || !config->spi->hdmarx || !config->spi->hdmatx ||
+        !receive)
+    {
+        return 0;
+    }
+    memset(p, 0, sizeof(*p));
+    p->config = *config;
+    p->receive = receive;
+    p->context = context;
+    p->delay = delay;
+    p->delay_context = delay_context;
+    p->acc_tx[0] = 0x80;
+    p->gyro_tx[0] = 0x80;
+    if (!own(p, 1))
+    {
+        return 0;
+    }
+    if (bsp_spi_reg_dma_callbacks(p->config.spi, completed, finished_error) != HAL_OK)
+    {
+        (void)own(p, 0);
+        return 0;
+    }
+
+    p->init_io_failed = 0;
+    drv_imu_bus_t bus = {.spi_ctx = p,
+                         .spi_xfer = spi,
+                         .acc_cs_ctx = p,
+                         .acc_cs = acc_cs,
+                         .gyro_cs_ctx = p,
+                         .gyro_cs = gyro_cs,
+                         .delay_ctx = p,
+                         .delay_ms = drv_imu_port_delay_ms};
     drv_imu_init(imu, &bus);
     drv_imu_start(imu);
     drv_imu_calibrate_gyro(imu, 3000);
@@ -244,9 +322,10 @@ uint8_t drv_imu_port_init(drv_imu_t *imu)
     drv_imu_data_convert(imu);
     drv_imu_initial_alignment(imu);
     drv_imu_quat_to_euler(imu);
-    bsp_spi_reg_dma_callbacks(&hspi1, completed, finished_error);
-    bsp_spi_reg_dma_wake_callback(wake_task);
-    return !s_init_io_failed;
+
+    bsp_spi_reg_dma_wake_callback(p->config.spi, wake_task);
+    (void)own(p, 0);
+    return !p->init_io_failed;
 }
 
 /**
@@ -258,22 +337,23 @@ uint8_t drv_imu_port_init(drv_imu_t *imu)
  * @note   运行时只由 TIM14 中断调用；不等待前一笔传输，不解包，不执行姿态或控制算法。
  * @note   本次触发的时间和序号随完整样本传递，ACC 完成后再启动 GYRO。
  */
-uint8_t drv_imu_port_sample_trigger(uint32_t tick, uint32_t sequence, uint32_t cycles)
+uint8_t drv_imu_port_sample_trigger(drv_imu_port_t *p, uint32_t tick, uint32_t sequence,
+                                    uint32_t cycles)
 {
-    if (drv_imu_port_debug.state != IDLE || !ready())
+    if (p->state != IDLE || !ready(p) || !own(p, 1))
     {
-        drv_imu_port_debug.busy_count++;
+        p->busy_count++;
         return 0;
     }
-    drv_imu_port_debug.sample.tick = tick;
-    drv_imu_port_debug.sample.sequence = sequence;
-    drv_imu_port_debug.sample.cycles = cycles;
-    drv_imu_port_debug.start_tick = bsp_tim_get_tick_ms();
-    drv_imu_port_debug.state = ACC;
-    acc_cs(NULL, 0);
-    if (bsp_spi_transceive_dma(&hspi1, s_acc_tx, s_acc_rx, sizeof(s_acc_tx)) != HAL_OK)
+    p->sample.tick = tick;
+    p->sample.sequence = sequence;
+    p->sample.cycles = cycles;
+    p->start_tick = bsp_tim_get_tick_ms();
+    p->state = ACC;
+    acc_cs(p, 0);
+    if (bsp_spi_transceive_dma(p->config.spi, p->acc_tx, p->acc_rx, sizeof(p->acc_tx)) != HAL_OK)
     {
-        abort_dma();
+        abort_dma(p);
         return 0;
     }
     return 1;
@@ -284,23 +364,26 @@ uint8_t drv_imu_port_sample_trigger(uint32_t tick, uint32_t sequence, uint32_t c
  * @note   由 IMU 任务周期检查；短临界区与 TIM14/DMA 回调串行修改采样状态。
  * @note   进行中的样本按 HAL 毫秒时基判断是否超过 2 ms；本函数不产生新的 ACC 采样节拍。
  */
-void drv_imu_port_poll(void)
+void drv_imu_port_poll(drv_imu_port_t *p)
 {
     uint32_t key = __get_PRIMASK();
     __disable_irq();
-    bsp_spi_poll_dma(&hspi1);
-    if (drv_imu_port_debug.state == GYRO_PENDING && ready())
+    if (owner(p->config.spi) == p)
     {
-        (void)start_gyro();
+        bsp_spi_poll_dma(p->config.spi);
     }
-    else if (drv_imu_port_debug.state != IDLE && drv_imu_port_debug.state != ABORTING &&
-             (uint32_t)(bsp_tim_get_tick_ms() - drv_imu_port_debug.start_tick) > 2)
+    if (p->state == GYRO_PENDING && ready(p))
     {
-        abort_dma();
+        (void)start_gyro(p);
     }
-    else if (drv_imu_port_debug.state == ABORTING && ready())
+    else if (p->state != IDLE && p->state != ABORTING &&
+             (uint32_t)(bsp_tim_get_tick_ms() - p->start_tick) > 2)
     {
-        finished_error(&hspi1);
+        abort_dma(p);
+    }
+    else if (p->state == ABORTING && ready(p))
+    {
+        finished_error(p->config.spi);
     }
     __set_PRIMASK(key);
 }
@@ -310,9 +393,9 @@ void drv_imu_port_poll(void)
  * @return 累计忙计数，uint32_t 回绕。
  * @note   任务诊断读取；不清除计数，不改变采样状态。
  */
-uint32_t drv_imu_port_get_busy_count(void)
+uint32_t drv_imu_port_get_busy_count(drv_imu_port_t *p)
 {
-    return drv_imu_port_debug.busy_count;
+    return p->busy_count;
 }
 
 /**
@@ -320,25 +403,31 @@ uint32_t drv_imu_port_get_busy_count(void)
  * @return 错误收尾累计次数，uint32_t 回绕。
  * @note   任务诊断读取；不清除计数，不改变采样状态。
  */
-uint32_t drv_imu_port_get_error_count(void)
+uint32_t drv_imu_port_get_error_count(drv_imu_port_t *p)
 {
-    return drv_imu_port_debug.error_count;
+    return p->error_count;
 }
 
 /**
  * @brief  启动 TIM10_CH1 加热 PWM 输出。
  * @note   由硬件/初始化流程在需要加热时调用；本接口只启动 PWM，不实现温度闭环。
  */
-void drv_imu_port_heater_start(void)
+void drv_imu_port_heater_start(drv_imu_port_t *p)
 {
-    bsp_tim_pwm_start(&htim10, TIM_CHANNEL_1);
+    if (p->config.heater)
+    {
+        bsp_tim_pwm_start(p->config.heater, p->config.heater_channel);
+    }
 }
 
 /**
  * @brief  设置 TIM10_CH1 的加热 PWM 比较值。
  * @param  value        CCR 比较值，单位为定时器计数；调用者依据 ARR 确保范围正确。
  */
-void drv_imu_port_heater_set(uint16_t value)
+void drv_imu_port_heater_set(drv_imu_port_t *p, uint16_t value)
 {
-    bsp_tim_pwm_set_compare(&htim10, TIM_CHANNEL_1, value);
+    if (p->config.heater)
+    {
+        bsp_tim_pwm_set_compare(p->config.heater, p->config.heater_channel, value);
+    }
 }

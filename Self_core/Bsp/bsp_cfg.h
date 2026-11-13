@@ -22,6 +22,8 @@ extern UART_HandleTypeDef huart6;
 
 extern SPI_HandleTypeDef hspi1;
 
+extern I2C_HandleTypeDef hi2c3; /**< IST8310 专用 I2C3。 */
+
 // ─── 定时器句柄 ──────────────────────────────────
 
 extern TIM_HandleTypeDef htim4;

@@ -72,6 +72,9 @@ void DMA1_Stream1_IRQHandler(void);
 void CAN1_SCE_IRQHandler(void);
 void CAN2_SCE_IRQHandler(void);
 /* USER CODE BEGIN EFP */
+void EXTI3_IRQHandler(void);
+void I2C3_EV_IRQHandler(void);
+void I2C3_ER_IRQHandler(void);
 
 /* USER CODE END EFP */
 

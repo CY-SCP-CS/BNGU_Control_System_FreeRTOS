@@ -120,4 +120,21 @@ void bsp_uart_rx_irq_dispatch(UART_HandleTypeDef *);
  * @note   须在接收启动前注册；当前分别供 UART1 日志、USART3 DBUS 和 USART6 裁判使用。
  */
 void bsp_uart_reg_rx_event_callback(UART_HandleTypeDef *, bsp_uart_rx_event_callback_t);
+/**
+ * @brief 独占注册某 UART 的接收事件；相同回调可重复注册。
+ * @param[in] uart 已初始化 UART，非 NULL。
+ * @param[in] callback 非 NULL 的同步 ISR 回调，接收期间不变。
+ * @return HAL_OK=注册成功；HAL_BUSY=已有不同接收者；HAL_ERROR=参数无效或表满。
+ * @note 仅启动前调用；DMA 缓冲和恢复由接收者维护，不分配内存。
+ */
+HAL_StatusTypeDef bsp_uart_claim_rx(UART_HandleTypeDef *uart,
+                                    bsp_uart_rx_event_callback_t callback);
+/**
+ * @brief 停止接收后释放该回调的注册槽。
+ * @param[in] uart 目标 UART。
+ * @param[in] callback 当前拥有者的回调；不匹配时保留原注册。
+ * @return 无返回值。未匹配时不修改。
+ * @note 仅任务上下文，调用前停用 DMA 并与 ISR 串行化。
+ */
+void bsp_uart_release_rx(UART_HandleTypeDef *uart, bsp_uart_rx_event_callback_t callback);
 #endif

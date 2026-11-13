@@ -8,6 +8,12 @@
 
 #include "lib_typedef.h"
 
+#define DRV_DBUS_CHANNEL_CENTER 1024
+#define DRV_DBUS_CHANNEL_RANGE 660
+#define DRV_DBUS_SWITCH_UP 1U
+#define DRV_DBUS_SWITCH_DOWN 2U
+#define DRV_DBUS_SWITCH_MIDDLE 3U
+
 #define DRV_DBUS_BUFFER_SIZE 18
 #define DRV_DBUS_CHANNEL_CENTER 1024
 #define DRV_DBUS_CHANNEL_RANGE 660
@@ -58,33 +64,5 @@ typedef struct
 void drv_dbus_decode(const uint8_t buffer[DRV_DBUS_BUFFER_SIZE], drv_dbus_data_t *data);
 
 // ─── Port: BSP 适配 ─────────────────────────────
-
-/**
- * @brief  DBUS 完整帧交付回调类型。
- * @note   在接收中断中调用；bytes 指向临时使用的 DMA 缓冲，接收者必须立即复制 18 字节。
- * @note   bytes=NULL 表示 UART 接收错误，不能对其解引用；这里不交付不足 18 字节的帧。
- */
-typedef void (*drv_dbus_frame_callback_t)(const uint8_t bytes[18]);
-/* Callback runs in IRQ context: bytes=NULL signals a receive error. */
-/**
- * @brief  绑定 DBUS 完整帧与接收错误的上交入口。
- * @param  callback     完整帧交付函数，NULL 表示不交付。
- * @note   在启动接收前由 RTOS 端口层绑定；当前回调复制到 dbus_rx_queue 并设置任务标志。
- */
-void drv_dbus_port_bind(drv_dbus_frame_callback_t callback);
-/**
- * @brief  初始化 DBUS (UART DMA + IDLE 中断)
- * @note   挂接 USART3 + DMA, 硬编码硬件映射
- * @note   复位接收双缓冲，注册 USART3 事件并启动第一轮 18 字节 DMA。
- * @return 1=DMA 启动成功，0=启动失败。
- * @note   初始化任务调用；USART3 的波特率、DMA 和中断配置由 CubeMX 外设初始化先完成。
- */
-uint8_t drv_dbus_port_init(void);
-/**
- * @brief  在接收停止后尝试重新启动 USART3 DMA。
- * @return 1=接收已运行或重启成功，0=本次重启失败。
- * @note   由 DBUS 任务定期调用；短临界区防止与接收中断同时改变 DMA 状态，本函数不解包。
- */
-uint8_t drv_dbus_port_poll(void);
 
 #endif

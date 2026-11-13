@@ -6,21 +6,49 @@
 
 #define BSP_SPI_TIMEOUT_MS 10
 
-static SPI_HandleTypeDef *s_spi_dma_handle;
-static bsp_spi_callback_t s_spi_dma_complete_callback;
-static bsp_spi_callback_t s_spi_dma_error_callback;
-static bsp_spi_callback_t s_spi_dma_wake_callback;
-/* s_close_pending：DMA 完成但 SPI 尚忙；s_abort_pending：停止 DMA 后等待使能位清零。 */
-static volatile uint8_t s_close_pending, s_abort_pending;
+#define BSP_SPI_BUS_COUNT 3U
+
+/** @brief 每个硬件 SPI 独立收尾状态；初始化注册，ISR/拥有者任务串行推进。 */
+typedef struct
+{
+    SPI_HandleTypeDef *handle;
+    bsp_spi_callback_t complete;
+    bsp_spi_callback_t error;
+    bsp_spi_callback_t wake;
+    volatile uint8_t close_pending;
+    volatile uint8_t abort_pending;
+} spi_bus_t;
+
+static spi_bus_t s_buses[BSP_SPI_BUS_COUNT];
+
+/** @brief 查找已注册 SPI 的收尾上下文。
+ * @param[in] spi 目标句柄。
+ * @return 上下文；未注册为 NULL。
+ * @note 无等待，只读注册表。 */
+static spi_bus_t *find_bus(SPI_HandleTypeDef *spi)
+{
+    for (unsigned i = 0; i < BSP_SPI_BUS_COUNT; i++)
+    {
+        if (s_buses[i].handle == spi)
+        {
+            return &s_buses[i];
+        }
+    }
+    return NULL;
+}
 
 /**
  * @brief  绑定需要任务继续处理 DMA 收尾时的唤醒入口。
  * @param  callback     状态检查唤醒函数，NULL 时不通知。
  * @note   仅保存函数指针，不创建任务；当前由 IMU 端口转换成线程标志。
  */
-void bsp_spi_reg_dma_wake_callback(bsp_spi_callback_t callback)
+void bsp_spi_reg_dma_wake_callback(SPI_HandleTypeDef *spi, bsp_spi_callback_t callback)
 {
-    s_spi_dma_wake_callback = callback;
+    spi_bus_t *bus = find_bus(spi);
+    if (bus)
+    {
+        bus->wake = callback;
+    }
 }
 
 /**
@@ -32,17 +60,22 @@ void bsp_spi_reg_dma_wake_callback(bsp_spi_callback_t callback)
 static void finish_rx_dma(DMA_HandleTypeDef *dma)
 {
     SPI_HandleTypeDef *spi = (SPI_HandleTypeDef *)dma->Parent;
+    spi_bus_t *bus = find_bus(spi);
+    if (!bus)
+    {
+        return;
+    }
     uint32_t status = spi->Instance->SR;
     if (!(status & SPI_SR_TXE) || (status & SPI_SR_BSY))
     {
-        s_close_pending = 1;
-        if (s_spi_dma_wake_callback)
+        bus->close_pending = 1;
+        if (bus->wake)
         {
-            s_spi_dma_wake_callback(spi);
+            bus->wake(spi);
         }
         return;
     }
-    s_close_pending = 0;
+    bus->close_pending = 0;
     __HAL_SPI_DISABLE_IT(spi, SPI_IT_ERR);
     CLEAR_BIT(spi->Instance->CR2, SPI_CR2_RXDMAEN | SPI_CR2_TXDMAEN);
     spi->TxXferCount = spi->RxXferCount = 0;
@@ -51,9 +84,9 @@ static void finish_rx_dma(DMA_HandleTypeDef *dma)
     {
         (void)bsp_spi_abort_dma(spi);
     }
-    else if (s_spi_dma_complete_callback)
+    else if (bus->complete)
     {
-        s_spi_dma_complete_callback(spi);
+        bus->complete(spi);
     }
 }
 
@@ -80,11 +113,17 @@ static void reset_dma(DMA_HandleTypeDef *dma)
  */
 void bsp_spi_poll_dma(SPI_HandleTypeDef *spi)
 {
-    if (spi != s_spi_dma_handle)
+    spi_bus_t *bus = find_bus(spi);
+    if (!bus)
     {
         return;
     }
-    if (s_abort_pending)
+
+    if (!bus)
+    {
+        return;
+    }
+    if (bus->abort_pending)
     {
         /* DMA stream disable is asynchronous; never spin with interrupts masked. */
         if ((spi->hdmarx->Instance->CR & DMA_SxCR_EN) || (spi->hdmatx->Instance->CR & DMA_SxCR_EN))
@@ -99,13 +138,13 @@ void bsp_spi_poll_dma(SPI_HandleTypeDef *spi)
         spi->TxXferCount = spi->RxXferCount = 0;
         spi->State = HAL_SPI_STATE_READY;
         __HAL_UNLOCK(spi);
-        s_abort_pending = s_close_pending = 0;
-        if (s_spi_dma_error_callback)
+        bus->abort_pending = bus->close_pending = 0;
+        if (bus->error)
         {
-            s_spi_dma_error_callback(spi);
+            bus->error(spi);
         }
     }
-    else if (s_close_pending)
+    else if (bus->close_pending)
     {
         finish_rx_dma(spi->hdmarx);
     }
@@ -137,6 +176,8 @@ void bsp_spi_transceive(SPI_HandleTypeDef *hspi, const uint8_t *tx, uint8_t *rx,
 HAL_StatusTypeDef bsp_spi_transceive_dma(SPI_HandleTypeDef *hspi, const uint8_t *tx, uint8_t *rx,
                                          uint16_t size)
 {
+    spi_bus_t *bus = find_bus(hspi);
+
     if (!hspi || !hspi->hdmarx || !hspi->hdmatx || !tx || !rx || size == 0U)
     {
         return HAL_ERROR;
@@ -144,7 +185,7 @@ HAL_StatusTypeDef bsp_spi_transceive_dma(SPI_HandleTypeDef *hspi, const uint8_t 
     uint32_t key = __get_PRIMASK();
     __disable_irq();
     HAL_StatusTypeDef status = HAL_SPI_TransmitReceive_DMA(hspi, (uint8_t *)tx, rx, size);
-    if (status == HAL_OK && hspi == s_spi_dma_handle && hspi->Init.Mode == SPI_MODE_MASTER &&
+    if (status == HAL_OK && bus != NULL && hspi->Init.Mode == SPI_MODE_MASTER &&
         hspi->Init.Direction == SPI_DIRECTION_2LINES &&
         hspi->Init.CRCCalculation == SPI_CRCCALCULATION_DISABLE)
     {
@@ -165,12 +206,29 @@ HAL_StatusTypeDef bsp_spi_transceive_dma(SPI_HandleTypeDef *hspi, const uint8_t 
  * @param  error        错误/中止收尾回调。
  * @note   当前实现只有一个全局注册槽，重新注册会覆盖旧绑定；启动 DMA 前调用。
  */
-void bsp_spi_reg_dma_callbacks(SPI_HandleTypeDef *hspi, bsp_spi_callback_t complete,
-                               bsp_spi_callback_t error)
+HAL_StatusTypeDef bsp_spi_reg_dma_callbacks(SPI_HandleTypeDef *hspi, bsp_spi_callback_t complete,
+                                            bsp_spi_callback_t error)
 {
-    s_spi_dma_handle = hspi;
-    s_spi_dma_complete_callback = complete;
-    s_spi_dma_error_callback = error;
+    if (!hspi || !complete || !error)
+    {
+        return HAL_ERROR;
+    }
+    spi_bus_t *bus = find_bus(hspi);
+    if (bus)
+    {
+        return bus->complete == complete && bus->error == error ? HAL_OK : HAL_BUSY;
+    }
+    for (unsigned i = 0; i < BSP_SPI_BUS_COUNT; i++)
+    {
+        if (!s_buses[i].handle)
+        {
+            s_buses[i].handle = hspi;
+            s_buses[i].complete = complete;
+            s_buses[i].error = error;
+            return HAL_OK;
+        }
+    }
+    return HAL_ERROR;
 }
 
 /**
@@ -181,16 +239,22 @@ void bsp_spi_reg_dma_callbacks(SPI_HandleTypeDef *hspi, bsp_spi_callback_t compl
  */
 HAL_StatusTypeDef bsp_spi_abort_dma(SPI_HandleTypeDef *hspi)
 {
+    spi_bus_t *bus = find_bus(hspi);
+    if (!bus)
+    {
+        return HAL_ERROR;
+    }
+
     if (!hspi)
     {
         return HAL_ERROR;
     }
-    if (hspi != s_spi_dma_handle || !hspi->hdmarx || !hspi->hdmatx)
+    if (!bus || !hspi->hdmarx || !hspi->hdmatx)
     {
         return HAL_ERROR;
     }
-    s_abort_pending = 1;
-    s_close_pending = 0;
+    bus->abort_pending = 1;
+    bus->close_pending = 0;
     __HAL_SPI_DISABLE_IT(hspi, SPI_IT_ERR);
     CLEAR_BIT(hspi->Instance->CR2, SPI_CR2_RXDMAEN | SPI_CR2_TXDMAEN);
     __HAL_DMA_DISABLE_IT(hspi->hdmarx, DMA_IT_TC | DMA_IT_HT | DMA_IT_TE | DMA_IT_DME);
@@ -200,9 +264,9 @@ HAL_StatusTypeDef bsp_spi_abort_dma(SPI_HandleTypeDef *hspi)
     __HAL_DMA_DISABLE(hspi->hdmarx);
     __HAL_DMA_DISABLE(hspi->hdmatx);
     bsp_spi_poll_dma(hspi);
-    if (s_abort_pending && s_spi_dma_wake_callback)
+    if (bus->abort_pending && bus->wake)
     {
-        s_spi_dma_wake_callback(hspi);
+        bus->wake(hspi);
     }
     return HAL_OK;
 }
@@ -214,9 +278,15 @@ HAL_StatusTypeDef bsp_spi_abort_dma(SPI_HandleTypeDef *hspi)
  */
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 {
-    if (hspi == s_spi_dma_handle && s_spi_dma_complete_callback)
+    spi_bus_t *bus = find_bus(hspi);
+    if (!bus)
     {
-        s_spi_dma_complete_callback(hspi);
+        return;
+    }
+
+    if (bus != NULL && bus->complete)
+    {
+        bus->complete(hspi);
     }
 }
 
@@ -227,7 +297,13 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
  */
 void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
 {
-    if (hspi == s_spi_dma_handle && s_spi_dma_error_callback)
+    spi_bus_t *bus = find_bus(hspi);
+    if (!bus)
+    {
+        return;
+    }
+
+    if (bus != NULL && bus->error)
     {
         (void)bsp_spi_abort_dma(hspi);
     }
@@ -240,8 +316,14 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
  */
 void HAL_SPI_AbortCpltCallback(SPI_HandleTypeDef *hspi)
 {
-    if (hspi == s_spi_dma_handle && s_spi_dma_error_callback)
+    spi_bus_t *bus = find_bus(hspi);
+    if (!bus)
     {
-        s_spi_dma_error_callback(hspi);
+        return;
+    }
+
+    if (bus != NULL && bus->error)
+    {
+        bus->error(hspi);
     }
 }

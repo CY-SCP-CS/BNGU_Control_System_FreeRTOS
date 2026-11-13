@@ -71,8 +71,7 @@ void bsp_tim_it_stop(TIM_HandleTypeDef *htim);
  * @note   在初始化阶段或停止目标定时器中断后调用；本函数只修改注册表，不启停硬件。
  * @note   表访问使用短 IRQ 临界区；回调在临界区外的 ISR 中执行，不能延时或等待互斥量。
  */
-HAL_StatusTypeDef bsp_tim_reg_callback(TIM_HandleTypeDef *htim,
-                                       bsp_tim_period_callback_t callback);
+HAL_StatusTypeDef bsp_tim_reg_callback(TIM_HandleTypeDef *htim, bsp_tim_period_callback_t callback);
 
 /**
  * @brief  根据定时器句柄查表并调用其更新回调。

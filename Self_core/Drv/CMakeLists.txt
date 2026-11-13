@@ -4,8 +4,12 @@ set(module_sources
     Drv_buzzer/drv_buzzer_port.c
     Drv_dbus/drv_dbus.c
     Drv_dbus/drv_dbus_port.c
+    Drv_imu/drv_imu_ekf.c
+    Drv_imu/drv_imu_vqf.c
     Drv_imu/drv_imu.c
     Drv_imu/drv_imu_port.c
+    Drv_mag/drv_mag.c
+    Drv_mag/drv_mag_port.c
     Drv_led/drv_led.c
     Drv_led/drv_led_port.c
     Drv_melody/drv_melody.c
@@ -22,6 +26,7 @@ set(module_includes
     Drv_buzzer
     Drv_dbus
     Drv_imu
+    Drv_mag
     Drv_led
     Drv_melody
     Drv_motor

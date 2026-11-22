@@ -3,7 +3,7 @@
 #ifndef APP_TASK_SHOOT_H
 #define APP_TASK_SHOOT_H
 #include <stdbool.h>
-#include "app_shoot_data.h"
+#include "App/Vehicles/Sentry/Contracts/app_shoot_data.h"
 /**
  * @brief  发布 已裁决发射命令快照
  * @param[in] value            输入快照，函数在锁内复制其内容
@@ -14,7 +14,7 @@
 void app_rtos_shoot_write(const app_shoot_command_t *value);
 /**
  * @brief  读取一份完整的 已裁决发射命令快照
- * @param[in] value            输出存储，失败时保留原内容
+ * @param[out] value           输出存储，失败时保留原内容
  * @return true=复制成功，false=参数/句柄无效或锁暂不可用
  * @note   由发射控制任务在任务上下文调用；使用 dbus_to_shoot_mutex，获取锁超时为 0。
  */

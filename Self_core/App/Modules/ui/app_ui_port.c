@@ -30,6 +30,11 @@ int app_ui_port_send(const void *frame, uint16_t length)
     {
         return -1;
     }
+    if (length < PROTOCOL_MIN_FRAME_LEN) return -1;
+    uint16_t command;
+    memcpy(&command, (const uint8_t *)frame + PROTOCOL_HEADER_LEN, sizeof(command));
+    if (command == CMD_ROBOT_INTERACTION &&
+        length > REFEREE_INTERACTION_PAYLOAD_MAX + PROTOCOL_MIN_FRAME_LEN) return -1;
     if (s_busy)
     {
         return 1;

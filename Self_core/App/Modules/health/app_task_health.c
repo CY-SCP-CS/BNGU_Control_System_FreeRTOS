@@ -8,11 +8,25 @@
 #include "app_tasks.h"
 #include "app_rtos_objects.h"
 #include "app_rtos_config.h"
-#include "app_board_config.h"
+#include "app_vehicle_config.h"
 #include "app_rtos_time.h"
-#include "app_task_log.h"
 #include "app_rtos_kernel.h"
 #include <string.h>
+
+static app_health_log_sink_t s_log_sink;
+
+void app_task_health_set_log_sink(app_health_log_sink_t sink)
+{
+    s_log_sink = sink;
+}
+
+static void health_log(uint8_t source, uint8_t level, uint16_t code, int32_t a, int32_t b)
+{
+    if (s_log_sink)
+    {
+        s_log_sink(source, level, code, a, b);
+    }
+}
 
 static osMutexId_t sys_health_mutex;
 static app_sys_health_snapshot_t s_health_snapshot;
@@ -30,11 +44,12 @@ bool app_rtos_health_read(app_sys_health_snapshot_t *v)
 
 /**
  * @brief  发布 系统健康快照
- * @param  v            输入快照，函数在锁内复制其内容
+ * @param[in] v            输入快照，函数在锁内复制其内容
  * @note   写入者：sys_health_Task；使用 sys_health_mutex，仅允许任务上下文调用。
  * @note   等待取得锁后只复制；参数/句柄无效或获取失败时忽略本次更新。
+ * @return 无返回值；参数/句柄无效或取锁失败时保留旧快照。
  */
-void app_rtos_health_write(const app_sys_health_snapshot_t *v)
+static void app_rtos_health_write(const app_sys_health_snapshot_t *v)
 {
     app_rtos_snapshot_write(sys_health_mutex, &s_health_snapshot, v, sizeof(*v));
 }
@@ -65,7 +80,7 @@ bool app_rtos_health_memory_read(app_health_memory_t *value)
     return true;
 }
 
-static app_sys_health_snapshot_t s_health; //工作副本仅由健康任务修改
+static app_sys_health_snapshot_t s_health; // 工作副本仅由健康任务修改
 static uint32_t s_reported_counters[COUNT_COUNT], s_reported_misses[TASK_COUNT];
 
 /**
@@ -86,8 +101,8 @@ static void module(unsigned index, bool first_ready, bool remind)
     if (s_health.ready && d->enabled &&
         (m->online != online || (!online && (first_ready || remind))))
     {
-        app_rtos_log(TASK_HEALTH, online ? 1 : 2, 100 + index, online,
-                     online ? 0 : (int32_t)(s_health.tick - status.tick));
+        health_log(TASK_HEALTH, online ? 1 : 2, 100 + index, online,
+                   online ? 0 : (int32_t)(s_health.tick - status.tick));
     }
     *m = (app_health_module_t){.name = d->name,
                                .tick = status.tick,
@@ -117,7 +132,7 @@ void Start_sys_health_Task(void *argument)
     uint32_t now = osKernelGetTickCount();
     uint32_t next = now + APP_RTOS_HEALTH_PERIOD;
     uint32_t report = now + APP_RTOS_HEALTH_REPORT_PERIOD;
-    uint32_t memory_sample = now; //第一轮检查即建立有效内存样本
+    uint32_t memory_sample = now; // 第一轮检查即建立有效内存样本
     uint32_t reminder = now + APP_RTOS_HEALTH_REMIND_PERIOD;
     for (;;)
     {
@@ -178,12 +193,12 @@ void Start_sys_health_Task(void *argument)
             }
             if (t->stack_warning != old_stack_warning || (remind && t->stack_warning))
             {
-                app_rtos_log(TASK_HEALTH, t->stack_warning ? 2 : 1, 21, i, t->stack_free);
+                health_log(TASK_HEALTH, t->stack_warning ? 2 : 1, 21, i, t->stack_free);
             }
             if (s_health.ready && (t->alive != old_alive || (remind && !t->alive)))
             {
-                app_rtos_log(TASK_HEALTH, t->alive ? 1 : 2, 22, i,
-                             t->alive ? 0 : (int32_t)(s_health.tick - t->stats.heartbeat));
+                health_log(TASK_HEALTH, t->alive ? 1 : 2, 22, i,
+                           t->alive ? 0 : (int32_t)(s_health.tick - t->stats.heartbeat));
             }
             if (t->stack_warning || !t->alive)
             {
@@ -209,8 +224,8 @@ void Start_sys_health_Task(void *argument)
         s_health.init_stack_free = app_rtos_init_stack_free;
         if (s_health.heap_warning != old_heap_warning || (remind && s_health.heap_warning))
         {
-            app_rtos_log(TASK_HEALTH, s_health.heap_warning ? 2 : 1, 20, warnings,
-                         s_health.heap_free);
+            health_log(TASK_HEALTH, s_health.heap_warning ? 2 : 1, 20, warnings,
+                       s_health.heap_free);
         }
         app_rtos_health_write(&s_health);
         /* 仅对新增漏周期/错误汇总；正常状态不再每秒输出同一份报告。
@@ -224,7 +239,7 @@ void Start_sys_health_Task(void *argument)
                 const app_health_task_t *t = &s_health.task[i];
                 if (t->enabled && t->stats.missed != s_reported_misses[i])
                 {
-                    app_rtos_log(TASK_HEALTH, 2, 23, i, t->stats.missed - s_reported_misses[i]);
+                    health_log(TASK_HEALTH, 2, 23, i, t->stats.missed - s_reported_misses[i]);
                 }
                 s_reported_misses[i] = t->stats.missed;
             }
@@ -235,8 +250,8 @@ void Start_sys_health_Task(void *argument)
                     /* 日志拥塞不再制造新的“日志丢失”日志；计数由内存摘要和调试器读取。 */
                     if (i != COUNT_LOG_DROP)
                     {
-                        app_rtos_log(TASK_HEALTH, 2, 24, i,
-                                     s_health.counters[i] - s_reported_counters[i]);
+                        health_log(TASK_HEALTH, 2, 24, i,
+                                   s_health.counters[i] - s_reported_counters[i]);
                     }
                     s_reported_counters[i] = s_health.counters[i];
                 }

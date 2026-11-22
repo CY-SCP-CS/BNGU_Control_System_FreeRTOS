@@ -7,7 +7,7 @@
 #ifndef APP_CHASSIS_COMM_H
 #define APP_CHASSIS_COMM_H
 
-#include "lib_typedef.h"
+#include "App/Vehicles/Sentry/Contracts/app_command_data.h"
 
 #define APP_CHASSIS_CAN_ID_SPEED_CMD 0x111U      // 底盘速度指令。
 #define APP_CHASSIS_CAN_ID_POWER_FEEDBACK 0x112U // 实际功率反馈。
@@ -15,39 +15,6 @@
 #define APP_CHASSIS_CAN_ID_FOLLOW_CMD 0x115U     // 跟随模式指令。
 #define APP_CHASSIS_CAN_ID_OMEGA_FEEDBACK 0x119U // 底盘角速度反馈。
 #define APP_CHASSIS_OMEGA_RAD_S_PER_LSB 0.001f   // 0x111 中 vz 的量化单位，rad/s。
-
-/** 0x111 底盘速度指令。 */
-typedef struct
-{
-    float vx;        // x 方向速度，单位 m/s，向前为正。
-    float vy;        // y 方向速度，单位 m/s，向左为正。
-    float vz;        // z 轴角速度 ，单位 rad/s，逆时针为正。
-    float power_pct; // 功率比例，无量纲，1 表示 100%，当前由底盘协议保留。
-} app_chassis_speed_cmd_t;
-
-/** 0x113 阿克曼底盘指令。 */
-typedef struct
-{
-    float speed;       // 车体线速度，单位 m/s，向前为正。
-    float steer_angle; // 转向角，单位 rad，向左为正。
-} app_chassis_ackermann_cmd_t;
-
-/** 0x115 跟随模式指令。 */
-typedef struct
-{
-    float vx;           // x 方向速度，单位 m/s，向前为正。
-    float vy;           // y 方向速度，单位 m/s，向左为正。
-    float gimbal_angle; // 云台角度 ，单位 rad，向左为正。
-    int16_t custom;     // 协议预留字段。
-} app_chassis_follow_cmd_t;
-
-/** 底盘板接收并解包后的全部控制数据。 */
-typedef struct
-{
-    app_chassis_speed_cmd_t speed;         // 0x111。
-    app_chassis_ackermann_cmd_t ackermann; // 0x113。
-    app_chassis_follow_cmd_t follow;       // 0x115。
-} app_chassis_comm_rx_t;
 
 /* 纯协议接口：不保存全局命令状态，rx 由调用任务持有。 */
 /**

@@ -4,7 +4,16 @@
  */
 #ifndef APP_RTOS_CONFIG_H
 #define APP_RTOS_CONFIG_H
-#include "app_control_config.h"
+#include "app_vehicle_config.h"
+
+/* 置 1 创建教学示例对象；业务队列和互斥量不受此开关影响。
+ * CMake 使用同名选项；Keil 可在预定义宏中设置为 1。 */
+#ifndef APP_RTOS_ENABLE_EXAMPLES
+#define APP_RTOS_ENABLE_EXAMPLES 0
+#endif
+#if APP_RTOS_ENABLE_EXAMPLES != 0 && APP_RTOS_ENABLE_EXAMPLES != 1
+#error "APP_RTOS_ENABLE_EXAMPLES must be 0 or 1"
+#endif
 
 /* 以下周期和超时以 tick 表示；app_rtos.c 强制要求内核频率 1000 Hz。 */
 #define APP_RTOS_GIM_PERIOD APP_CONTROL_GIM_PERIOD_MS
@@ -43,27 +52,11 @@
 #define APP_RTOS_HEAP_MIN_BYTES 1024U
 
 /* 容量直接用于创建对象；不再存在头文件写一个值、创建代码另写常量的情况。 */
-#define APP_RTOS_CAN_RX_QUEUE_DEPTH 32U
-#define APP_RTOS_CAN_TX_QUEUE_DEPTH 16U
-#define APP_RTOS_CTRL_QUEUE_DEPTH 16U
 #define APP_RTOS_LOG_QUEUE_DEPTH 16U
-#define APP_RTOS_DBUS_QUEUE_DEPTH 4U
-#define APP_RTOS_IMU_QUEUE_DEPTH 4U
-#define APP_RTOS_CAN_DATA_SIZE 8U
-#define APP_RTOS_CAN_RX_BUDGET 8U
-#define APP_RTOS_CAN_CTRL_BUDGET 8U
-#define APP_RTOS_CAN_PENDING_DEPTH 16U
-#define APP_RTOS_REF_FIFO_SIZE 1024U
-#define APP_RTOS_REF_CHUNK_SIZE 128U
-#define APP_RTOS_REF_BATCH_CHUNKS 8U
 #ifndef APP_LOG_VOFA
 #define APP_LOG_VOFA 0
 #endif
 
-#endif
-
 /* Work budgets are independent of storage capacity. */
-#define APP_RTOS_CAN_TX_BUDGET 16U
-#define APP_RTOS_CTRL_INPUT_BUDGET 16U
-#define APP_RTOS_DBUS_PARSE_BUDGET 4U
-#define APP_RTOS_IMU_PARSE_BUDGET 4U
+
+#endif

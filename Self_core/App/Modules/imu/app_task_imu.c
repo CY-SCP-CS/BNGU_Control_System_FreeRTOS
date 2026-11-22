@@ -4,22 +4,23 @@
  * @note    入口名、周期、业务算法及原通信对象名保持；通信对象句柄仅所属模块可访问。
  */
 #include "app_rtos.h"
+#include "app_task_imu.h"
 #include "app_task_imu_internal.h"
 #include "app_tasks.h"
 #include "app_rtos_objects.h"
 #include "app_rtos_config.h"
-#include "app_board_config.h"
+#include "app_vehicle_config.h"
 #include "app_rtos_time.h"
 #include "app_task_monitor.h"
 #include <string.h>
-#include "app_devices.h"
+#include "app_task_imu_io.h"
 #include <math.h>
 #include "drv_imu.h"
 
 static osMessageQueueId_t imu_rx_queue;
 static osMutexId_t imu_to_gim_mutex;
 static app_imu_snapshot_t s_imu;
-static drv_imu_t app_rtos_imu_instance; //算法实例仅初始化阶段和运行 IMU 任务访问。
+static drv_imu_t app_rtos_imu_instance; // 算法实例仅初始化阶段和运行 IMU 任务访问。
 
 /** @brief 采样回调可在 ISR 或驱动恢复路径调用；只复制完整样本或发唤醒信号。 */
 void app_rtos_imu_receive(const drv_imu_dma_sample_t *sample)
@@ -52,11 +53,13 @@ bool app_rtos_imu_read(app_imu_snapshot_t *v)
 
 /**
  * @brief  发布 IMU 姿态快照
- * @param  v            输入快照，函数在锁内复制其内容
- * @note   写入者：comm_imu_Task；初始化任务在启动前也发布初始对齐姿态；使用 imu_to_gim_mutex，仅允许任务上下文调用。
+ * @param[in] v            输入快照，函数在锁内复制其内容
+ * @note   写入者：comm_imu_Task；初始化任务在启动前也发布初始对齐姿态；使用
+ * imu_to_gim_mutex，仅允许任务上下文调用。
  * @note   等待取得锁后只复制；参数/句柄无效或获取失败时忽略本次更新。
+ * @return 无返回值；参数/句柄无效或取锁失败时保留旧快照。
  */
-void app_rtos_imu_write(const app_imu_snapshot_t *v)
+static void app_rtos_imu_write(const app_imu_snapshot_t *v)
 {
     app_rtos_snapshot_write(imu_to_gim_mutex, &s_imu, v, sizeof(*v));
 }
@@ -65,7 +68,7 @@ void app_rtos_imu_write(const app_imu_snapshot_t *v)
 bool app_rtos_imu_prepare(void)
 {
 #if APP_BOARD_HAS_IMU
-    if (!app_devices_imu_prepare(&app_rtos_imu_instance))
+    if (!app_task_imu_port_prepare(&app_rtos_imu_instance))
     {
         return false;
     }
@@ -118,6 +121,17 @@ void Start_comm_imu_Task(void *argument)
             uint32_t started = app_rtos_cycles();
             drv_imu_t *imu = &app_rtos_imu_instance;
             /* 原始六轴数据按传感器小端组合，解析与物理量转换均在任务中完成。 */
+            if (sample.acc_chip_id != DRV_IMU_ACC_CHIP_ID ||
+                sample.gyro_chip_id != DRV_IMU_GYRO_CHIP_ID)
+            {
+                snapshot.valid = snapshot.device_valid = snapshot.filter_ready = 0;
+                snapshot.tick = sample.tick;
+                app_rtos_imu_write(&snapshot);
+                app_rtos_module_update(MODULE_IMU, false, sample.tick);
+                previous_cycles = 0;
+                drv_imu_reset_filter(imu);
+                continue;
+            }
             drv_imu_parse_acc_raw(imu, sample.acc);
             drv_imu_parse_gyro_raw(imu, sample.gyro);
             /* 姿态积分 dt 来自硬件触发的 DWT 时间差，与任务被调度的延迟无关。 */
@@ -127,14 +141,17 @@ void Start_comm_imu_Task(void *argument)
             /* 长时间中断无法重建丢失运动，异常间隔恢复时按标称 1 ms 积分。 */
             if (dt <= 0 || dt > 0.01f)
             {
+                drv_imu_reset_filter(imu);
                 dt = 0.001f;
             }
             drv_imu_data_convert(imu);
             drv_imu_update(imu, dt);
             drv_imu_quat_to_euler(imu);
-            snapshot.acc = (lib_vec3f_t){imu->acc.x * LIB_STANDARD_GRAVITY_M_S2,
-                                         imu->acc.y * LIB_STANDARD_GRAVITY_M_S2,
-                                         imu->acc.z * LIB_STANDARD_GRAVITY_M_S2};
+            lib_vec3f_t body_acc;
+            drv_imu_get_body_acc(imu, &body_acc);
+            snapshot.acc = (lib_vec3f_t){body_acc.x * LIB_STANDARD_GRAVITY_M_S2,
+                                         body_acc.y * LIB_STANDARD_GRAVITY_M_S2,
+                                         body_acc.z * LIB_STANDARD_GRAVITY_M_S2};
             drv_imu_get_body_gyro(imu, &snapshot.gyro);
             drv_imu_get_body_quat(imu, &snapshot.quat);
             snapshot.euler = (lib_euler_rad_t){imu->euler.pitch * LIB_RAD_PER_DEG,
@@ -143,19 +160,24 @@ void Start_comm_imu_Task(void *argument)
             snapshot.tick = sample.tick;
             snapshot.sequence = sample.sequence;
             snapshot.sampled = 1;
-            /* 芯片 ID 有效性只用于健康监测；sampled 单独记录运行采样，避免序号回绕误报。 */
+            /* Validity is published consistently to control and diagnostics. */
             snapshot.device_valid = sample.acc_chip_id == DRV_IMU_ACC_CHIP_ID &&
                                     sample.gyro_chip_id == DRV_IMU_GYRO_CHIP_ID;
-            snapshot.valid =
-                isfinite(imu->euler.yaw) && isfinite(imu->euler.roll) && isfinite(imu->gyro.z);
+            snapshot.filter_ready = drv_imu_filter_is_ready(imu);
+            snapshot.valid = isfinite(snapshot.euler.yaw) && isfinite(snapshot.euler.roll) &&
+                             isfinite(snapshot.euler.pitch) && isfinite(snapshot.gyro.x) &&
+                             isfinite(snapshot.gyro.y) && isfinite(snapshot.gyro.z) &&
+                             isfinite(snapshot.acc.x) && isfinite(snapshot.acc.y) &&
+                             isfinite(snapshot.acc.z);
             app_rtos_imu_write(&snapshot);
             app_rtos_module_update(MODULE_IMU,
                                    snapshot.valid && snapshot.sampled && snapshot.device_valid,
                                    snapshot.tick);
             app_tasks_profile_end(TASK_IMU, started);
         }
-        app_devices_imu_poll();
-        app_rtos_module_diagnostics(MODULE_IMU, app_devices_imu_errors(), app_devices_imu_busy());
+        app_task_imu_port_poll();
+        app_rtos_module_diagnostics(MODULE_IMU, app_task_imu_port_errors(),
+                                    app_task_imu_port_busy());
         app_tasks_wait_event(TASK_IMU,
                              APP_RTOS_IMU_POLL_WAIT); /* 任务超时只推进恢复，不启动新采样。 */
     }

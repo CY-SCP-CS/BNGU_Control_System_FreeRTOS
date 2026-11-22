@@ -7,7 +7,7 @@
 #include "app_task_init.h"
 #include "app_tasks.h"
 #include "app_rtos_config.h"
-#include "app_board_config.h"
+#include "app_vehicle_config.h"
 #include "app_rtos_time.h"
 #include "app_rtos_board.h"
 #include "app_task_monitor.h"

@@ -4,7 +4,7 @@
  */
 #include "app_task_can_port.h"
 #include "app_task_can_internal.h"
-#include "app_board_config.h"
+#include "app_vehicle_config.h"
 #include "cmsis_os2.h"
 #include "bsp_can.h"
 

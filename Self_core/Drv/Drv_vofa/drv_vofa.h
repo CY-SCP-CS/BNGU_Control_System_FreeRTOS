@@ -37,10 +37,13 @@ typedef enum
 drv_vofa_status_t drv_vofa_pack(const float data[DRV_VOFA_CHANNEL_COUNT],
                                 uint8_t frame[DRV_VOFA_FRAME_SIZE]);
 
-// ─── Port: BSP 适配 ─────────────────────────────
+/* 裸机可选端口：实现位于 drv_vofa_port.c，不加入 RTOS 默认构建。
+ * RTOS 只调用 drv_vofa_pack，由日志任务持有缓冲并独占 UART1。 */
 
 /**
- * @brief  初始化 VOFA (BSP 适配版)
+ * @brief  初始化裸机示例的 UART1 发送状态及回调。
+ * @return 无返回值；注册发送完成回调。
+ * @note   仅裸机启动阶段调用；必须显式编译可选端口，禁止与 RTOS 日志端口共用。
  */
 void drv_vofa_port_init(void);
 

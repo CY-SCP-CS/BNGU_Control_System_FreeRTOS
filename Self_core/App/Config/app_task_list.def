@@ -8,7 +8,7 @@
  *          栈大小单位为字节，未填写的策略字段默认初始化为 0。
  * @note    清单顺序决定任务编号。现有任务顺序保持固定，新任务追加到末尾，
  *          不按板型裁剪清单；enabled 只决定当前板是否创建对应线程。
- *          入口函数仍在各任务自己的头文件中声明，app_rtos.c 包含这些头文件。
+ *          入口函数仍在各任务自己的头文件中声明，Assembly/app_rtos_setup.c 包含这些内部头文件。
  *          队列、互斥量等通信对象由所属模块的 init/deinit 管理。
  */
 
@@ -20,8 +20,8 @@
 APP_TASK(
     TASK_CHAS,
     ctrl_chas_TaskHandle,
-    Start_ctrl_chas_Task,
-    .name = "ctrl_chas_Task",
+    APP_TASK_CHASSIS_ENTRY,
+    .name = APP_TASK_CHASSIS_NAME,
     .stack = 1536,
     .priority = osPriorityHigh,
     .enabled = APP_BOARD_HAS_CHASSIS,
@@ -32,7 +32,7 @@ APP_TASK(
 APP_TASK(
     TASK_GIM,
     ctrl_gim_TaskHandle,
-    Start_ctrl_gim_Task,
+    APP_TASK_GIMBAL_ENTRY,
     .name = "ctrl_gim_Task",
     .stack = 1536,
     .priority = osPriorityHigh,
@@ -44,7 +44,7 @@ APP_TASK(
 APP_TASK(
     TASK_SHOOT,
     ctrl_shoot_TaskHandle,
-    Start_ctrl_shoot_Task,
+    APP_TASK_SHOOT_ENTRY,
     .name = "ctrl_shoot_Task",
     .stack = 1024,
     .priority = osPriorityAboveNormal3,

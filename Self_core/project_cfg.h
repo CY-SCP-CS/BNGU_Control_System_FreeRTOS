@@ -16,14 +16,15 @@
 #endif
 
 // ========== [必改] 选择车组 ==========
-#define ROBOT_HERO 0
+#define ROBOT_ARMORED 4
 #define ROBOT_INFANTRY 1
 #define ROBOT_SENTRY 2
 #define ROBOT_NAVIGATION 3
 
-/* 提供哨兵与导航车算法。车组与板型分别选择：同一哨兵工程可构建云台板或底盘板。 */
+/* 哨兵、导航、重装为三个独立车型。车组与板型分别选择：同一哨兵工程可构建云台板或底盘板。 */
 #ifndef CURRENT_ROBOT
-#define CURRENT_ROBOT ROBOT_SENTRY // ROBOT_SENTRY / ROBOT_NAVIGATION；英雄整车控制未完成。
+#define CURRENT_ROBOT                                                                              \
+    ROBOT_SENTRY // ROBOT_SENTRY / ROBOT_NAVIGATION / ROBOT_ARMORED；重装整车控制尚未接入调度。
 #endif
 
 /* 编译时尽早拒绝无效板型，防止任务表与硬件角色不一致。 */
@@ -31,13 +32,11 @@
 #error "Unsupported CURRENT_BOARD"
 #endif
 
-#if CURRENT_ROBOT != ROBOT_SENTRY && CURRENT_ROBOT != ROBOT_NAVIGATION
+#if CURRENT_ROBOT != ROBOT_SENTRY && CURRENT_ROBOT != ROBOT_NAVIGATION &&                          \
+    CURRENT_ROBOT != ROBOT_ARMORED
 #error "Unsupported CURRENT_ROBOT"
 #endif
 
-#if CURRENT_ROBOT == ROBOT_NAVIGATION && CURRENT_BOARD != BOARD_CHASSIS
-#error "Navigation requires BOARD_CHASSIS"
-#endif
 #if defined(APP_UI_MODE) && APP_UI_MODE != 0 && CURRENT_BOARD != BOARD_CHASSIS
 #error "Referee UI requires BOARD_CHASSIS"
 #endif

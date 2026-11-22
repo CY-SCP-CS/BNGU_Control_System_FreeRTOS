@@ -8,13 +8,13 @@
 #include "app_tasks.h"
 #include "app_rtos_objects.h"
 #include "app_rtos_config.h"
-#include "app_board_config.h"
+#include "app_vehicle_config.h"
 #include "app_rtos_time.h"
 #include "app_task_monitor.h"
 #include <string.h>
 #include "app_ui_service.h"
 #include "drv_referee.h"
-#include "app_devices.h"
+#include "app_task_referee_io.h"
 
 _Static_assert((APP_RTOS_REF_FIFO_SIZE & (APP_RTOS_REF_FIFO_SIZE - 1U)) == 0 &&
                    APP_RTOS_REF_FIFO_SIZE > 0,
@@ -27,7 +27,8 @@ static app_ref_snapshot_t s_ref;
  * @brief  读取一份完整的 裁判状态快照
  * @param  v            输出存储，失败时保留原内容
  * @return true=复制成功，false=参数/句柄无效或锁暂不可用
- * @note   由需要裁判数据的任务（控制读取接口预留）在任务上下文调用；使用 ref_to_chas_mutex，获取锁超时为 0。
+ * @note   由需要裁判数据的任务（控制读取接口预留）在任务上下文调用；使用
+ * ref_to_chas_mutex，获取锁超时为 0。
  */
 bool app_rtos_ref_read(app_ref_snapshot_t *v)
 {
@@ -36,11 +37,12 @@ bool app_rtos_ref_read(app_ref_snapshot_t *v)
 
 /**
  * @brief  发布 裁判状态快照
- * @param  v            输入快照，函数在锁内复制其内容
+ * @param[in] v            输入快照，函数在锁内复制其内容
  * @note   写入者：comm_ref_Task；使用 ref_to_chas_mutex，仅允许任务上下文调用。
  * @note   等待取得锁后只复制；参数/句柄无效或获取失败时忽略本次更新。
+ * @return 无返回值；参数/句柄无效或取锁失败时保留旧快照。
  */
-void app_rtos_ref_write(const app_ref_snapshot_t *v)
+static void app_rtos_ref_write(const app_ref_snapshot_t *v)
 {
     app_rtos_snapshot_write(ref_to_chas_mutex, &s_ref, v, sizeof(*v));
 }
@@ -115,7 +117,7 @@ void app_rtos_ref_error_isr(void)
  * @note   仅 comm_ref_Task 作为单消费者调用；短临界区处理复位，字节复制不持有互斥量。
  * @note   复位后可能已收到新字节，调用者应先处理 reset 再解析返回的字节。
  */
-uint16_t app_rtos_ref_pop(uint8_t *bytes, uint16_t cap, uint8_t *reset)
+static uint16_t app_rtos_ref_pop(uint8_t *bytes, uint16_t cap, uint8_t *reset)
 {
     uint32_t key = app_rtos_irq_lock();
     *reset = s_ref_fifo.s_reset;
@@ -220,7 +222,7 @@ void Start_comm_ref_Task(void *argument)
             app_rtos_count_add(COUNT_REF_CRC, batch.errors);
         }
         /* poll 已在重启尝试前清理解析半帧，失败时只补充诊断计数。 */
-        if (!app_devices_referee_poll())
+        if (!app_task_referee_port_poll())
         {
             app_rtos_count(COUNT_IO_RESTART_ERROR);
         }

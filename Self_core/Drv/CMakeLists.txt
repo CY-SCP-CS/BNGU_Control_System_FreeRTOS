@@ -1,5 +1,7 @@
 # 本层维护自己的源文件；tools/sync_keil_project.py 从同一清单同步 MDK。
+# UART1 belongs to the log task. The legacy direct VOFA port is not linked.
 set(module_sources
+    Drv_game_controller/drv_game_controller.c
     Drv_buzzer/drv_buzzer.c
     Drv_buzzer/drv_buzzer_port.c
     Drv_dbus/drv_dbus.c
@@ -20,9 +22,9 @@ set(module_sources
     Drv_referee/drv_referee.c
     Drv_referee/drv_referee_port.c
     Drv_vofa/drv_vofa.c
-    Drv_vofa/drv_vofa_port.c
 )
 set(module_includes
+    Drv_game_controller
     Drv_buzzer
     Drv_dbus
     Drv_imu

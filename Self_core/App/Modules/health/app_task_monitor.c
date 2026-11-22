@@ -4,7 +4,7 @@
  */
 
 #include "app_task_monitor.h"
-#include "app_board_config.h"
+#include "app_vehicle_config.h"
 #include "app_rtos_time.h"
 #include <string.h>
 

@@ -1,12 +1,13 @@
 """Exercise the real IST8310 core and board acquisition with injected failures."""
 from pathlib import Path
+import os
 import shutil
 import subprocess
 
 root = Path(__file__).resolve().parents[2]
 out = root / "build/host-tests"
 out.mkdir(parents=True, exist_ok=True)
-cc = shutil.which("gcc")
+cc = os.environ.get("HOST_CC") or shutil.which("gcc")
 if cc is None:
     raise SystemExit("gcc is required for host regression tests")
 mag = "Self_core/Drv/Drv_mag"

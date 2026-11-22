@@ -1,5 +1,8 @@
 # 哨兵 FreeRTOS 架构与开发指南
 
+2026-11-13 更新：[输入时效、模块边界、设备端口和依赖检查说明](ARCHITECTURE_REFACTOR_20261113.md)。
+创建入口为 `Assembly/app_rtos_setup.h`；任务表与模块生命周期在 `Assembly/app_rtos_setup.c` 维护。Runtime 不依赖业务模块。
+
 ## 目录与依赖
 
 ```text
@@ -21,9 +24,13 @@ Self_core/
   Os/                       CMSIS/FreeRTOS 对象、内核、CPU 机制
 ```
 
-业务通过同步函数计算，任务负责取输入、调度、提交输出。公共服务头不公开队列和互斥量句柄；`*_internal.h` 供本模块、装配和任务注册使用。`app_rtos` 保留既有接口命名，不代表函数都属于 Os。Os 不包含业务类型。
+业务通过同步函数计算，任务负责取输入、调度、提交输出。公共服务头不公开队列和互斥量句柄；`internal/` 内部头供本模块和装配使用；各模块通过独立 CMake API 目标声明公共依赖。`app_rtos` 保留既有接口命名，不代表函数都属于 Os。Os 不包含业务类型。
 
-控制内核状态由所属控制任务独占。输入快照锁内只复制，读锁超时为零；读取失败保留上一完整副本并计数。数据过期与读取失败不同，控制保留原来的急停和断线判定。诊断快照失败不影响电机结果；遥测发布锁超时零，失败保留旧值并累计 `COUNT_TELEMETRY_DROP`。
+公共服务声明只在模块的 `app_task_<功能>.h` 维护。内部头包含公共头，只补充接收回调、任务入口和 init/deinit；不重复维护同一份 API。仅本文件使用的快照写入函数和裁判 FIFO 取数函数设为 static。日志和健康模块的任务入口、创建与回滚接口不向服务使用者公开。
+
+`Assembly/app_rtos_board.c` 直接选择本板算法初始化，其私有 `app_init()` 不作为跨模块接口。`app_rtos_board.c` 只保留板级硬件映射与端口启动连接；设备实例由所属模块的 `app_task_*_port.c` 静态持有。任务通过模块私有 io 接口轮询设备。
+
+控制内核状态由所属控制任务独占。输入快照锁内只复制，读锁超时为零；读取失败保留上一完整副本并计数。数据过期与读取失败不同，控制入口按 `app_input_config.h` 检查有效性和数据年龄，过期进入停止/复位；详见整改说明。诊断快照失败不影响电机结果；遥测发布锁超时零，失败保留旧值并累计 `COUNT_TELEMETRY_DROP`。
 
 ## 调度与交付
 
@@ -39,6 +46,10 @@ Self_core/
 | 云台 → 发射 | dbus_to_shoot_mutex | 已裁决模式及就绪/急停，不再由发射独立裁决输入 |
 | 裁判 ISR → 任务 | FIFO + 线程标志 | 连续有序字节，溢出/错误请求重同步 |
 | 所有任务 → 日志 | 固定事件队列 | 满时丢新事件并计数，UART1 由日志任务独占 |
+
+UART1 只有日志任务一个发送者。VOFA 只调用 `drv_vofa_pack()` 打包，再通过日志端口发送；`Drv_vofa/drv_vofa_port.c` 是不加入 RTOS 构建的裸机直发示例，禁止同时注册它的 UART1 回调。异步发送缓冲必须持有至完成或确认中止。
+
+完整控制快照供诊断读取；VOFA 读取只在同一把锁内提取九个 float，显示单位换算在锁外进行，不另存一份完整控制状态。锁忙时保持调用者旧通道值，并由日志任务计数。
 
 队列容量是存储上限；`*_BUDGET` 是每轮工作量，不应通过扩容同时扩大工作预算。新增逐条事件不得套用连续电机状态的覆盖策略。
 
@@ -68,11 +79,19 @@ DBUS 和裁判端口每个实例持有自己的 DMA 缓冲、位置、回调和�
 
 IMU 实例持有 ACC/GYRO DMA 缓冲和状态。状态为 IDLE → ACC → GYRO_PENDING/GYRO → IDLE；错误进入 ABORTING，硬件确认停止后释放总线。SPI 每个硬件实例有独立收尾槽，同一 SPI 的完整采样只允许一个拥有者；忙时跳过并计数，不自动排队。DMA 缓冲必须普通 SRAM，不能放 CCM；异步启动成功只代表接受启动，完成前不可复用。
 
+## 教学对象与封装边界
+
+业务和预留通信对象保持创建；教学示例二值信号量由 `APP_RTOS_ENABLE_EXAMPLES` 控制，默认 0。示例源码、对象名及 `app_rtos_example_sem_release/acquire()` 接口保留；关闭时接口立即返回 false，不分配该对象。
+
+CMake 启用示例：`cmake --preset GIMBAL_TEXT -DAPP_RTOS_ENABLE_EXAMPLES=ON`，之后重新构建。关闭时使用 OFF。Keil 可直接定义 `APP_RTOS_ENABLE_EXAMPLES=1`；按预设同步时工具从 CMake 缓存同步该开关。
+
+保留统一任务清单、周期等待、带优先级继承的快照锁、启动门控、错误计数和硬件缓冲生命周期。这些封装集中维护实际规则。仅转调且不隐藏硬件、所有权、同步或策略的函数，优先放回调用方；不额外建立模块注册器或通用事件总线。CAN 六个队列和待发槽继续保留，修改其合并策略须区分连续状态与逐条事件。
+
 ## 新增模块与团队协作
 
-1. 在 `Modules/<功能>/` 放相邻的服务头、任务、算法与端口；私有状态设 static。
+1. 在 `Modules/<功能>/` 放相邻的服务头、任务、算法与端口；私有头放 `internal/`，私有状态设 static。
 2. 先定义契约：所有者、调用者、上下文、复制/借用、单位、时间源、新鲜度和失败策略。生产者与消费者共同评审。
-3. 模块 CMake 显式列出 algorithm/runtime/port 源；顶层只组合模块。
+3. 模块 CMake 显式列出 algorithm/runtime/port 源；顶层只组合模块。`App/CMakeLists.txt` 的 `app_modules` 是模块名称唯一清单；新增模块在本模块 CMake 明确声明其公共 API 依赖，内部路径不得传播。
 4. 新任务追加 `Config/app_task_list.def`，保持已有编号与入口名；配置板型能力、启动门控、栈和优先级。
 5. 新通信对象在所属模块 init 创建，deinit 逆序删除；不向其他模块导出句柄。
 6. 新设备静态分配端口与解析实例，装配连接明确事件回调；同一 UART 竞争接收者应初始化失败。
@@ -84,10 +103,12 @@ IMU 实例持有 ACC/GYRO DMA 缓冲和状态。状态为 IDLE → ACC → GYRO_
 
 配置/构建使用 GIMBAL_TEXT、GIMBAL_VOFA、CHASSIS_TEXT、CHASSIS_VOFA 四个哨兵 CMake 预设；导航使用 NAVIGATION_TEXT/VOFA，UI 使用 CHASSIS_UI_REFEREE/DEMO。CMake 从实际目标生成 `build/<预设>/self_core_manifest.json`，Keil 同步读取此清单，先配置再运行 `python tools/sync_keil_project.py --preset GIMBAL_TEXT`。不要维护第二份 YAML 源码表。
 
-主机边界回归：`tests/host/run_contracts.ps1 -Compiler <gcc路径>`。格式使用仓库 `.clang-format`。公共 API 的头文件说明是权威文档；私有函数在定义前说明。注释必须有 brief、逐参数方向、返回值与上下文，void 明确无返回值；单位、借用期限与失败语义由评审核对，自动扫描不能证明说明真实。
+主机回归统一入口：`tests/host/run_tests.ps1 -Compiler <gcc路径>`，执行契约、移植算法、磁力计、IMU 及遥测回归。只检查协议单位边界可运行 `tests/host/run_contracts.ps1 -Compiler <gcc路径>`；只检查遥测可运行 `python tests/telemetry/run_tests.py --cc <gcc路径>`。遥测覆盖两种板型的九通道值及 40 B 协议字节、非阻塞锁忙保留旧值、独立读取副本和发布失败计数。
+
+格式使用仓库 `.clang-format`。公共 API 的头文件说明是权威文档；私有函数在定义前说明。注释必须有 brief、逐参数方向、返回值与上下文，void 明确无返回值；单位、借用期限与失败语义由评审核对，自动扫描不能证明说明真实。
 
 本机边界测试不能证明整套旧算法等价、真实 DMA 恢复或实时性。上板须对照急停/断线/全部发射模式、CAN 协议、60 秒漏周期、栈和堆水位。硬件验证结果单独记录，不把编译成功写成已验证控制效果。
 
 ## 姿态、导航与可选 UI
 
-IMU 默认 VQF，也可配置 Mahony/EKF；安装补偿在驱动输出边界完成。磁力计异步 I2C 由 IMU 任务推进，仅提供独立数据和在线诊断。导航板启用 DBUS 与 IMU；英雄麦轮、关节仍为未完成内核，不自动接入任务。UI 与裁判 RX 共用 USART6 的不同方向，TX 缓冲独立，超时只终止 TX。云台 VOFA 为九通道 40B 帧。详细配置、协议单位、完成程度和测试入口见 [控制功能对应说明](BAREMETAL_PORT.md)。
+IMU 默认 VQF，也可配置 Mahony/EKF；安装补偿在驱动输出边界完成。磁力计异步 I2C 由 IMU 任务推进，仅提供独立数据和在线诊断。导航板启用 DBUS 与 IMU；重装 ARMORED 麦轮、关节仍为未完成内核，不自动接入整车任务；HERO 已删除，车型与板型边界见 [车型边界](VEHICLE_BOUNDARIES.md)。UI 与裁判 RX 共用 USART6 的不同方向，TX 缓冲独立，超时只终止 TX。云台 VOFA 为九通道 40B 帧。详细配置、协议单位、完成程度和测试入口见 [控制功能对应说明](BAREMETAL_PORT.md)。

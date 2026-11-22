@@ -6,6 +6,7 @@
 #define APP_TASK_MONITOR_H
 #include <stdbool.h>
 #include <stdint.h>
+#include "app_vehicle_config.h"
 
 enum
 {
@@ -33,11 +34,11 @@ typedef struct
 } app_rtos_module_status_t;
 
 extern const app_rtos_module_desc_t app_rtos_module_table[APP_HEALTH_MODULE_COUNT];
-void app_rtos_monitor_init(void); /**< 接收启动前清零状态。 */
 void app_rtos_module_update(unsigned module, bool valid,
                             uint32_t tick); /**< 任务/合法 ISR 短临界区发布。 */
 void app_rtos_module_diagnostics(unsigned module, uint32_t errors, uint32_t overruns);
-/** @brief 一次只复制一个小状态，避免健康任务长时间关闭中断复制大快照。  * @return true=完成；false=参数或资源当前不可用。
+/** @brief 一次只复制一个小状态，避免健康任务长时间关闭中断复制大快照。  * @return
+ * true=完成；false=参数或资源当前不可用。
  */
 bool app_rtos_module_read(unsigned module,
                           app_rtos_module_status_t *value); /**< 短复制，健康任务不读设备大快照。 */

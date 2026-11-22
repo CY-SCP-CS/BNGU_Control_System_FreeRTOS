@@ -100,6 +100,7 @@ def sync(root, project, board=None, log_mode=None, preset=None):
                 defines = ET.SubElement(controls, "Define")
             values = [v.strip() for v in (defines.text or "").split(",") if v.strip()]
             overrides = {
+                "APP_RTOS_ENABLE_EXAMPLES": "1" if options.get("APP_RTOS_ENABLE_EXAMPLES", "OFF").upper() in ("ON", "1", "TRUE", "YES") else "0",
                 "CURRENT_ROBOT": "ROBOT_" + options.get("APP_ROBOT", "SENTRY"),
                 "APP_UI_MODE": {"OFF": "0", "REFEREE": "1", "DEMO": "2"}[options.get("APP_UI", "OFF")],
             }

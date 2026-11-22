@@ -1,6 +1,7 @@
 /**
  * @file    drv_vofa_port.c
- * @brief   BSP 适配 — drv_vofa 的硬件端口挂接
+ * @brief   裸机直发 UART1 的可选示例，不加入 RTOS 默认构建。
+ * @note    RTOS 使用日志任务独占 UART1；禁止同时初始化两套发送回调。
  */
 #include "drv_vofa.h"
 #include "bsp_cfg.h"

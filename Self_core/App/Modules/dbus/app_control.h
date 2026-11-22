@@ -4,7 +4,7 @@
  */
 #ifndef APP_CONTROL_H
 #define APP_CONTROL_H
-#include "app_control_input.h"
+#include "app_dbus_data.h"
 #include "drv_dbus.h"
 
 /**
@@ -21,5 +21,5 @@ uint8_t app_control_dbus_valid(const drv_dbus_data_t *data);
  * @return 1=成功；0=空指针。输入校验和快照有效位由调用者负责。
  * @note   保留原函数名；此转换属于输入处理，不依赖 CAN 或快照类型。
  */
-uint8_t app_gimbal_comm_dbus_rx(const drv_dbus_data_t *dbus, app_gimbal_dbus_input_t *input);
+uint8_t app_dbus_map_input(const drv_dbus_data_t *dbus, app_remote_input_t *input);
 #endif

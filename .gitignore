@@ -53,7 +53,6 @@ Thumbs.db
 /tests/host/bsp_tim.h
 /tests/host/bsp_uart.h
 /tests/host/FreeRTOS.h
-/tests/host/run_tests.ps1
 /tests/host/task.h
 /tests/host/test_imu_port.c
 /tests/host/test_runtime.c

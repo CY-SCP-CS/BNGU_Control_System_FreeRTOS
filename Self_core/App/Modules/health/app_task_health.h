@@ -74,24 +74,10 @@ bool app_rtos_health_memory_read(app_health_memory_t *value);
 
 /**
  * @brief  读取一份完整的 系统健康快照
- * @param[in] value            输出存储，失败时保留原内容
+ * @param[out] value           输出存储，失败时保留原内容
  * @return true=复制成功，false=参数/句柄无效或锁暂不可用
  * @note   由诊断查询任务在任务上下文调用；使用 sys_health_mutex，获取锁超时为 0。
  */
 bool app_rtos_health_read(app_sys_health_snapshot_t *value); /**< 非阻塞读取；失败保留输出。 */
-void app_rtos_health_write(
-    const app_sys_health_snapshot_t *value); /**< 健康任务发布，锁内只复制。 */
-
-/**
- * @brief  系统健康任务入口；在线状态、任务栈和堆的快照接口见本头文件
- * @param  argument CMSIS-RTOS2 任务入口参数，当前创建时传 NULL。
- * @note   由任务表注册并由调度器调用，业务代码不直接调用任务入口。
- */
-void Start_sys_health_Task(void *argument);
-
-/** @brief 调度器启动前创建本模块的对象与初始数据。 */
-bool app_task_health_init(void);
-/** @brief 仅启动失败回滚时调用，调用前确保所属任务未运行。 */
-void app_task_health_deinit(void);
 
 #endif

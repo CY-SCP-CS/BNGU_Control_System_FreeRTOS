@@ -49,6 +49,7 @@ static struct
     mag_io_kind_t io_kind;
     drv_mag_snapshot_t snapshot, published;
     uint32_t state_since_ms, last_poll_ms, io_started_ms, sample_tick_ms;
+    uint8_t sample_has_drdy;
     uint8_t config_index, config_phase;
 } s_magnetometer;
 
@@ -56,14 +57,14 @@ static IST8310_Status_t map_status(HAL_StatusTypeDef status)
 {
     switch (status)
     {
-        case HAL_OK:
-            return IST8310_OK;
-        case HAL_BUSY:
-            return IST8310_ERR_BUSY;
-        case HAL_TIMEOUT:
-            return IST8310_ERR_TIMEOUT;
-        default:
-            return IST8310_ERR_IO;
+    case HAL_OK:
+        return IST8310_OK;
+    case HAL_BUSY:
+        return IST8310_ERR_BUSY;
+    case HAL_TIMEOUT:
+        return IST8310_ERR_TIMEOUT;
+    default:
+        return IST8310_ERR_IO;
     }
 }
 
@@ -159,69 +160,75 @@ static void io_callback_result(void)
 
     switch (s_magnetometer.io_kind)
     {
-        case MAG_IO_ID:
-            s_magnetometer.snapshot.device_id = s_magnetometer.io_buffer[0];
-            if (s_magnetometer.snapshot.device_id != IST8310_DEVICE_ID)
-            {
-                recover(IST8310_ERR_DEVICE_ID, bsp_tim_get_tick_ms());
-                return;
-            }
-            s_magnetometer.config_index = 0U;
-            s_magnetometer.config_phase = 1U; /* write first setting */
-            break;
-        case MAG_IO_CONFIG_WRITE:
-            s_magnetometer.config_phase = 2U; /* read it back next tick */
-            break;
-        case MAG_IO_CONFIG_VERIFY:
-            if (s_magnetometer.io_buffer[0] != s_settings[s_magnetometer.config_index].value)
-            {
-                recover(IST8310_ERR_VERIFY, bsp_tim_get_tick_ms());
-                return;
-            }
-            ++s_magnetometer.config_index;
-            s_magnetometer.config_phase = 1U;
-            break;
-        case MAG_IO_START:
-            s_magnetometer.state_since_ms = bsp_tim_get_tick_ms();
-            s_magnetometer.last_poll_ms = s_magnetometer.state_since_ms;
-            s_magnetometer.snapshot.state = DRV_MAG_WAIT;
-            break;
-        case MAG_IO_STATUS:
-            s_magnetometer.stat1 = s_magnetometer.io_buffer[0];
-            if ((s_magnetometer.stat1 & 0x01U) != 0U)
-            {
-                s_magnetometer.snapshot.state = DRV_MAG_READ_DATA;
-            }
-            else if ((uint32_t)(bsp_tim_get_tick_ms() - s_magnetometer.state_since_ms) >=
-                     IST8310_DEFAULT_TIMEOUT_MS)
-            {
-                recover(IST8310_ERR_TIMEOUT, bsp_tim_get_tick_ms());
-            }
-            else
-            {
-                s_magnetometer.snapshot.state = DRV_MAG_WAIT;
-            }
-            break;
-        case MAG_IO_DATA:
+    case MAG_IO_ID:
+        s_magnetometer.snapshot.device_id = s_magnetometer.io_buffer[0];
+        if (s_magnetometer.snapshot.device_id != IST8310_DEVICE_ID)
         {
-            IST8310_Data_t sample;
-            IST8310_Status_t status =
-                IST8310_DecodeSample(s_magnetometer.stat1, s_magnetometer.io_buffer, &sample);
-            if (status != IST8310_OK)
-            {
-                recover(status, bsp_tim_get_tick_ms());
-                return;
-            }
-            s_magnetometer.snapshot.sample = sample;
-            ++s_magnetometer.snapshot.sample_count;
-            s_magnetometer.snapshot.last_update_ms = s_magnetometer.sample_tick_ms;
-            s_magnetometer.snapshot.valid = true;
-            s_magnetometer.snapshot.online = true;
-            s_magnetometer.snapshot.state = DRV_MAG_START;
-            break;
+            recover(IST8310_ERR_DEVICE_ID, bsp_tim_get_tick_ms());
+            return;
         }
-        default:
-            break;
+        s_magnetometer.config_index = 0U;
+        s_magnetometer.config_phase = 1U; /* write first setting */
+        break;
+    case MAG_IO_CONFIG_WRITE:
+        s_magnetometer.config_phase = 2U; /* read it back next tick */
+        break;
+    case MAG_IO_CONFIG_VERIFY:
+        if (s_magnetometer.io_buffer[0] != s_settings[s_magnetometer.config_index].value)
+        {
+            recover(IST8310_ERR_VERIFY, bsp_tim_get_tick_ms());
+            return;
+        }
+        ++s_magnetometer.config_index;
+        s_magnetometer.config_phase = 1U;
+        break;
+    case MAG_IO_START:
+        s_magnetometer.state_since_ms = bsp_tim_get_tick_ms();
+        s_magnetometer.last_poll_ms = s_magnetometer.state_since_ms;
+        s_magnetometer.snapshot.state = DRV_MAG_WAIT;
+        break;
+    case MAG_IO_STATUS:
+        s_magnetometer.stat1 = s_magnetometer.io_buffer[0];
+        if ((s_magnetometer.stat1 & 0x01U) != 0U)
+        {
+            s_magnetometer.snapshot.state = DRV_MAG_READ_DATA;
+        }
+        else if ((uint32_t)(bsp_tim_get_tick_ms() - s_magnetometer.state_since_ms) >=
+                 IST8310_DEFAULT_TIMEOUT_MS)
+        {
+            recover(IST8310_ERR_TIMEOUT, bsp_tim_get_tick_ms());
+        }
+        else
+        {
+            s_magnetometer.snapshot.state = DRV_MAG_WAIT;
+        }
+        break;
+    case MAG_IO_DATA:
+    {
+        IST8310_Data_t sample;
+        IST8310_Status_t status =
+            IST8310_DecodeSample(s_magnetometer.stat1, s_magnetometer.io_buffer, &sample);
+        if (status != IST8310_OK)
+        {
+            recover(status, bsp_tim_get_tick_ms());
+            return;
+        }
+        uint32_t ready_tick;
+        if (take_data_ready(&ready_tick) && !s_magnetometer.sample_has_drdy)
+        {
+            s_magnetometer.sample_tick_ms = ready_tick;
+            s_magnetometer.sample_has_drdy = 1;
+        }
+        s_magnetometer.snapshot.sample = sample;
+        ++s_magnetometer.snapshot.sample_count;
+        s_magnetometer.snapshot.last_update_ms = s_magnetometer.sample_tick_ms;
+        s_magnetometer.snapshot.valid = true;
+        s_magnetometer.snapshot.online = true;
+        s_magnetometer.snapshot.state = DRV_MAG_START;
+        break;
+    }
+    default:
+        break;
     }
     s_magnetometer.io_kind = MAG_IO_NONE;
 }
@@ -298,67 +305,70 @@ static void process_io(uint32_t now_ms)
     HAL_StatusTypeDef status = HAL_OK;
     switch (s_magnetometer.snapshot.state)
     {
-        case DRV_MAG_CONFIGURE:
-            if (s_magnetometer.config_phase == 0U)
-            {
-                status = start_read(0x00U, 1U, MAG_IO_ID, now_ms);
-                if (status == HAL_OK)
-                {
-                    s_magnetometer.config_phase = 0xFFU;
-                }
-            }
-            else if (s_magnetometer.config_phase == 1U)
-            {
-                if (s_magnetometer.config_index >= sizeof(s_settings) / sizeof(s_settings[0]))
-                {
-                    s_magnetometer.snapshot.state = DRV_MAG_START;
-                    return;
-                }
-                status = start_write(s_settings[s_magnetometer.config_index].reg,
-                                     s_settings[s_magnetometer.config_index].value,
-                                     MAG_IO_CONFIG_WRITE, now_ms);
-            }
-            else if (s_magnetometer.config_phase == 2U)
-            {
-                status = start_read(s_settings[s_magnetometer.config_index].reg, 1U,
-                                    MAG_IO_CONFIG_VERIFY, now_ms);
-            }
-            break;
-        case DRV_MAG_START:
-            (void)take_data_ready(NULL);
-            status = start_write(0x0AU, 0x01U, MAG_IO_START, now_ms);
-            break;
-        case DRV_MAG_WAIT:
+    case DRV_MAG_CONFIGURE:
+        if (s_magnetometer.config_phase == 0U)
         {
-            uint32_t ready_tick = 0U;
-            bool ready = take_data_ready(&ready_tick);
-            uint32_t elapsed = now_ms - s_magnetometer.state_since_ms;
-            if (elapsed < IST8310_MIN_SAMPLE_INTERVAL_MS)
+            status = start_read(0x00U, 1U, MAG_IO_ID, now_ms);
+            if (status == HAL_OK)
             {
-                return;
+                s_magnetometer.config_phase = 0xFFU;
             }
-            if (!ready && now_ms == s_magnetometer.last_poll_ms)
-            {
-                return;
-            }
-            if (ready)
-            {
-                s_magnetometer.sample_tick_ms = ready_tick;
-            }
-            else
-            {
-                s_magnetometer.sample_tick_ms = now_ms;
-            }
-            s_magnetometer.last_poll_ms = now_ms;
-            status = start_read(0x02U, 1U, MAG_IO_STATUS, now_ms);
-            break;
         }
-        case DRV_MAG_READ_DATA:
-            /* STAT1 is captured separately so the seven-byte burst remains atomic. */
-            status = start_read(0x03U, 7U, MAG_IO_DATA, now_ms);
-            break;
-        default:
-            break;
+        else if (s_magnetometer.config_phase == 1U)
+        {
+            if (s_magnetometer.config_index >= sizeof(s_settings) / sizeof(s_settings[0]))
+            {
+                s_magnetometer.snapshot.state = DRV_MAG_START;
+                return;
+            }
+            status = start_write(s_settings[s_magnetometer.config_index].reg,
+                                 s_settings[s_magnetometer.config_index].value, MAG_IO_CONFIG_WRITE,
+                                 now_ms);
+        }
+        else if (s_magnetometer.config_phase == 2U)
+        {
+            status = start_read(s_settings[s_magnetometer.config_index].reg, 1U,
+                                MAG_IO_CONFIG_VERIFY, now_ms);
+        }
+        break;
+    case DRV_MAG_START:
+        (void)take_data_ready(NULL);
+        s_magnetometer.sample_has_drdy = 0;
+        status = start_write(0x0AU, 0x01U, MAG_IO_START, now_ms);
+        break;
+    case DRV_MAG_WAIT:
+    {
+        uint32_t ready_tick = 0U;
+
+        uint32_t elapsed = now_ms - s_magnetometer.state_since_ms;
+        if (elapsed < IST8310_MIN_SAMPLE_INTERVAL_MS)
+        {
+            return;
+        }
+        bool ready = take_data_ready(&ready_tick);
+        if (!ready && now_ms == s_magnetometer.last_poll_ms)
+        {
+            return;
+        }
+        if (ready && !s_magnetometer.sample_has_drdy)
+        {
+            s_magnetometer.sample_tick_ms = ready_tick;
+            s_magnetometer.sample_has_drdy = 1;
+        }
+        if (!s_magnetometer.sample_has_drdy)
+        {
+            s_magnetometer.sample_tick_ms = now_ms;
+        }
+        s_magnetometer.last_poll_ms = now_ms;
+        status = start_read(0x02U, 1U, MAG_IO_STATUS, now_ms);
+        break;
+    }
+    case DRV_MAG_READ_DATA:
+        /* STAT1 is captured separately so the seven-byte burst remains atomic. */
+        status = start_read(0x03U, 7U, MAG_IO_DATA, now_ms);
+        break;
+    default:
+        break;
     }
     if (status != HAL_OK && status != HAL_BUSY)
     {
@@ -388,31 +398,31 @@ void drv_mag_port_process(void)
     uint32_t now_ms = bsp_tim_get_tick_ms();
     switch (s_magnetometer.snapshot.state)
     {
-        case DRV_MAG_RESET_LOW:
-            if ((uint32_t)(now_ms - s_magnetometer.state_since_ms) >= MAG_RESET_HOLD_MS)
-            {
-                set_reset(false);
-                s_magnetometer.state_since_ms = now_ms;
-                s_magnetometer.config_phase = 0U;
-                s_magnetometer.snapshot.state = DRV_MAG_RESET_SETTLE;
-            }
-            break;
-        case DRV_MAG_RESET_SETTLE:
-            if ((uint32_t)(now_ms - s_magnetometer.state_since_ms) >= MAG_RESET_SETTLE_MS)
-            {
-                s_magnetometer.snapshot.state = DRV_MAG_CONFIGURE;
-            }
-            break;
-        case DRV_MAG_RECOVERING:
-            if ((uint32_t)(now_ms - s_magnetometer.state_since_ms) >= MAG_RETRY_MS)
-            {
-                ++s_magnetometer.snapshot.recovery_count;
-                begin_reset(now_ms);
-            }
-            break;
-        default:
-            process_io(now_ms);
-            break;
+    case DRV_MAG_RESET_LOW:
+        if ((uint32_t)(now_ms - s_magnetometer.state_since_ms) >= MAG_RESET_HOLD_MS)
+        {
+            set_reset(false);
+            s_magnetometer.state_since_ms = now_ms;
+            s_magnetometer.config_phase = 0U;
+            s_magnetometer.snapshot.state = DRV_MAG_RESET_SETTLE;
+        }
+        break;
+    case DRV_MAG_RESET_SETTLE:
+        if ((uint32_t)(now_ms - s_magnetometer.state_since_ms) >= MAG_RESET_SETTLE_MS)
+        {
+            s_magnetometer.snapshot.state = DRV_MAG_CONFIGURE;
+        }
+        break;
+    case DRV_MAG_RECOVERING:
+        if ((uint32_t)(now_ms - s_magnetometer.state_since_ms) >= MAG_RETRY_MS)
+        {
+            ++s_magnetometer.snapshot.recovery_count;
+            begin_reset(now_ms);
+        }
+        break;
+    default:
+        process_io(now_ms);
+        break;
     }
     publish_snapshot();
 }

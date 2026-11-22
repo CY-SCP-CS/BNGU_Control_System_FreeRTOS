@@ -1,27 +1,13 @@
 /**
  * @file    app_rtos.c
- * @brief   任务清单展开、对象创建、启动状态与应用诊断
+ * @brief   通用启动状态、计数与运行诊断；任务装配在 Assembly
  */
 
-#include "app_task_init.h"
-#include "app_task_chassis.h"
-#include "app_task_gimbal.h"
-#include "app_rtos_kernel.h"
-#include "app_task_monitor.h"
-#include "app_task_telemetry_internal.h"
-#include "app_task_log_internal.h"
-#include "app_task_health_internal.h"
-#include "app_task_referee_internal.h"
-#include "app_task_shoot_internal.h"
-#include "app_task_imu_internal.h"
-#include "app_task_dbus_internal.h"
-#include "app_task_can_internal.h"
 #include "app_rtos.h"
 #include "app_tasks.h"
 #include "app_rtos_time.h"
-#include "app_board_config.h"
 #include "app_rtos_config.h"
-
+#include "app_rtos_runtime_internal.h"
 _Static_assert(APP_RTOS_KERNEL_TICK_HZ == 1000,
                "This application's periods require a 1 kHz kernel tick");
 _Static_assert(APP_CONTROL_GIM_PERIOD_MS > 0 && APP_CONTROL_CHAS_PERIOD_MS > 0 &&
@@ -33,25 +19,9 @@ _Static_assert(APP_CONTROL_FEEDBACK_PERIOD_MS >= APP_CONTROL_GIM_PERIOD_MS &&
                    APP_CONTROL_FEEDBACK_PERIOD_MS % APP_CONTROL_CHAS_PERIOD_MS == 0,
                "Feedback period must be an integer multiple of control periods");
 static osEventFlagsId_t sys_init_event;
-static osSemaphoreId_t app_rtos_example_binary_sem; //示例仍创建，保留原名，初始计数为 0。
-/* 从统一清单定义句柄：静态初始化为 NULL，创建线程后写入线程 ID。 */
-#define APP_TASK(task_id, task_handle, task_entry, ...) osThreadId_t task_handle;
-#include "app_task_list.def"
-#undef APP_TASK
-
-/* 从同一清单构造任务表，创建、启动门控和健康监测共用。
- * 前三个参数提供编号、句柄和入口，__VA_ARGS__ 填入具名属性。
- * 任务配置在 App/Config/app_task_list.def 维护；入口声明由各任务头提供。
- */
-#define APP_TASK(task_id, task_handle, task_entry, ...)                                            \
-    [task_id] = {.handle = &task_handle, .entry = task_entry, __VA_ARGS__},
-
-const app_rtos_task_desc_t app_rtos_task_table[TASK_COUNT] = {
-#include "app_task_list.def"
-};
-
-#undef APP_TASK
-
+#if APP_RTOS_ENABLE_EXAMPLES
+static osSemaphoreId_t app_rtos_example_binary_sem; // 初始计数为 0，名称保持。
+#endif
 app_rtos_task_stats_t app_rtos_task_stats[TASK_COUNT];
 volatile uint32_t app_rtos_counters[COUNT_COUNT];
 uint32_t app_rtos_start_tick, app_rtos_init_stack_free;
@@ -59,97 +29,22 @@ uint8_t app_rtos_init_completed;
 
 bool app_rtos_example_sem_release(void)
 {
+#if APP_RTOS_ENABLE_EXAMPLES
     return app_rtos_example_binary_sem && osSemaphoreRelease(app_rtos_example_binary_sem) == osOK;
+#else
+    return false;
+#endif
 }
 
 bool app_rtos_example_sem_acquire(uint32_t timeout)
 {
+#if APP_RTOS_ENABLE_EXAMPLES
     return app_rtos_example_binary_sem &&
            osSemaphoreAcquire(app_rtos_example_binary_sem, timeout) == osOK;
-}
-
-/** @brief 仅启动失败时回滚；调用前已经终止所有已创建线程。 */
-static void delete_objects(void)
-{
-    app_task_telemetry_deinit();
-    app_task_log_deinit();
-    app_task_health_deinit();
-    app_task_referee_deinit();
-    app_task_shoot_deinit();
-    app_task_imu_deinit();
-    app_task_dbus_deinit();
-    app_task_can_deinit();
-    if (sys_init_event)
-    {
-        osEventFlagsDelete(sys_init_event);
-        sys_init_event = NULL;
-    }
-    if (app_rtos_example_binary_sem)
-    {
-        osSemaphoreDelete(app_rtos_example_binary_sem);
-        app_rtos_example_binary_sem = NULL;
-    }
-}
-
-/** @brief 调度器启动前创建通信对象和本板任务，成功后重复调用不重新创建。 */
-bool app_rtos_task_init(void)
-{
-    static bool initialized;
-    if (initialized)
-    {
-        return true;
-    }
-    /* 禁止把首次装配当作运行中的热重启，回滚只覆盖尚未运行的线程。 */
-    if (osKernelGetState() != osKernelReady)
-    {
-        return false;
-    }
-    const osEventFlagsAttr_t event_attr = {.name = "sys_init_event"};
-    const osSemaphoreAttr_t sem_attr = {.name = "app_rtos_example_binary_sem"};
-    sys_init_event = osEventFlagsNew(&event_attr);
-    app_rtos_example_binary_sem = osSemaphoreNew(1, 0, &sem_attr);
-    /* 所有对象在调度器启动前创建，预留的对象也保留。模块入口直接可读。 */
-    if (!(sys_init_event && app_rtos_example_binary_sem &&
-          app_task_can_init() &&      // 六个 CAN 队列和反馈锁。
-          app_task_dbus_init() &&     // 遥控帧队列和遥控快照锁。
-          app_task_imu_init() &&      // 样本队列和姿态快照锁。
-          app_task_shoot_init() &&    // 已裁决发射命令的快照锁。
-          app_task_referee_init() &&  // 裁判 FIFO 状态和裁判快照锁。
-          app_task_health_init() &&   // 健康状态快照锁。
-          app_task_log_init() &&      // 日志事件队列。
-          app_task_telemetry_init())) // 控制状态和波形共用的快照锁。
-    {
-        goto failed;
-    }
-    app_rtos_monitor_init();
-    for (unsigned i = 0; i < TASK_COUNT; i++)
-    {
-        const app_rtos_task_desc_t *d = &app_rtos_task_table[i];
-        if (!d->enabled)
-        {
-            continue;
-        }
-        const osThreadAttr_t attr = {
-            .name = d->name, .stack_size = d->stack, .priority = d->priority};
-        *d->handle = osThreadNew(d->entry, NULL, &attr);
-        if (!*d->handle)
-        {
-            goto failed;
-        }
-    }
-    initialized = true;
-    return true;
-failed:
-    for (unsigned i = 0; i < TASK_COUNT; i++)
-    {
-        if (*app_rtos_task_table[i].handle)
-        {
-            osThreadTerminate(*app_rtos_task_table[i].handle);
-            *app_rtos_task_table[i].handle = NULL;
-        }
-    }
-    delete_objects();
+#else
+    (void)timeout;
     return false;
+#endif
 }
 
 /** @brief 短临界区保护计数的读改写；允许任务和满足 RTOS 优先级限制的中断。 */
@@ -262,4 +157,39 @@ void app_tasks_wait_phase(unsigned task, uint32_t wanted)
         }
         return;
     }
+}
+
+/* Startup-only primitives; Assembly owns the higher-level rollback order. */
+bool app_rtos_startup_objects_init(void)
+{
+    const osEventFlagsAttr_t event_attr = {.name = "sys_init_event"};
+    sys_init_event = osEventFlagsNew(&event_attr);
+    if (!sys_init_event)
+    {
+        return false;
+    }
+#if APP_RTOS_ENABLE_EXAMPLES
+    const osSemaphoreAttr_t sem_attr = {.name = "app_rtos_example_binary_sem"};
+    app_rtos_example_binary_sem = osSemaphoreNew(1, 0, &sem_attr);
+    if (!app_rtos_example_binary_sem)
+    {
+        return false;
+    }
+#endif
+    return true;
+}
+void app_rtos_startup_objects_deinit(void)
+{
+    if (sys_init_event)
+    {
+        osEventFlagsDelete(sys_init_event);
+        sys_init_event = NULL;
+    }
+#if APP_RTOS_ENABLE_EXAMPLES
+    if (app_rtos_example_binary_sem)
+    {
+        osSemaphoreDelete(app_rtos_example_binary_sem);
+        app_rtos_example_binary_sem = NULL;
+    }
+#endif
 }

@@ -43,10 +43,20 @@ set(APP_BOARD "GIMBAL" CACHE STRING "Board: GIMBAL or CHASSIS")
 set_property(CACHE APP_BOARD PROPERTY STRINGS GIMBAL CHASSIS)
 set(APP_LOG_MODE "TEXT" CACHE STRING "UART1: TEXT memory reports or VOFA")
 set_property(CACHE APP_LOG_MODE PROPERTY STRINGS TEXT VOFA)
-set(APP_ROBOT "SENTRY" CACHE STRING "Robot: SENTRY or NAVIGATION")
-set_property(CACHE APP_ROBOT PROPERTY STRINGS SENTRY NAVIGATION)
+set(APP_ROBOT "SENTRY" CACHE STRING "Vehicle: SENTRY, NAVIGATION or ARMORED")
+set_property(CACHE APP_ROBOT PROPERTY STRINGS SENTRY NAVIGATION ARMORED)
 set(APP_UI "OFF" CACHE STRING "Referee UI: OFF, REFEREE or DEMO")
 set_property(CACHE APP_UI PROPERTY STRINGS OFF REFEREE DEMO)
+option(APP_RTOS_ENABLE_EXAMPLES "Create unused RTOS teaching objects" OFF)
 add_subdirectory(Self_core)
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 target_link_libraries(${CMAKE_PROJECT_NAME} stm32cubemx)
+
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_custom_target(check_dependencies
+        COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/tools/check_dependencies.py"
+            --compile-commands "${CMAKE_BINARY_DIR}/compile_commands.json"
+            --output "${CMAKE_BINARY_DIR}/dependency_audit.json"
+        VERBATIM)
+endif()

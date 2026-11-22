@@ -212,6 +212,8 @@ void drv_imu_get_body_quat(const drv_imu_t *imu, lib_quatf_t *out);
  *  EKF/VQF 减去 filter.bias；Mahony 加上 integral_fb，最后旋转到安装补偿后的机体系。
  *  不改写原始 gyro、零偏估计或滤波状态。
  */
+uint8_t drv_imu_filter_is_ready(const drv_imu_t *imu);
+void drv_imu_get_body_acc(const drv_imu_t *imu, lib_vec3f_t *out);
 void drv_imu_get_body_gyro(const drv_imu_t *imu, lib_vec3f_t *out);
 
 /** 切换算法并重置其内部状态，保留当前姿态及静态零偏；成功返回 1。

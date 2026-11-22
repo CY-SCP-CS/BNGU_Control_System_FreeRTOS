@@ -26,6 +26,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "app_rtos.h"
+#include "app_rtos_setup.h"
 
 /* USER CODE END Includes */
 
@@ -83,7 +84,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_QUEUES */
 
   /* USER CODE BEGIN RTOS_THREADS */
-  if (!app_rtos_task_init())
+  if (!app_rtos_create_tasks())
   {
     Error_Handler();
   }

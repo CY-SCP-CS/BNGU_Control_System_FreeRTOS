@@ -63,16 +63,20 @@
         },
         {
             "name": "NAVIGATION_TEXT",
-            "inherits": "CHASSIS_TEXT",
+            "inherits": "Debug",
             "cacheVariables": {
-                "APP_ROBOT": "NAVIGATION"
+                "APP_ROBOT": "NAVIGATION",
+                "APP_BOARD": "CHASSIS",
+                "APP_LOG_MODE": "TEXT"
             }
         },
         {
             "name": "NAVIGATION_VOFA",
-            "inherits": "CHASSIS_VOFA",
+            "inherits": "Debug",
             "cacheVariables": {
-                "APP_ROBOT": "NAVIGATION"
+                "APP_ROBOT": "NAVIGATION",
+                "APP_BOARD": "CHASSIS",
+                "APP_LOG_MODE": "VOFA"
             }
         },
         {
@@ -87,6 +91,60 @@
             "inherits": "CHASSIS_TEXT",
             "cacheVariables": {
                 "APP_UI": "DEMO"
+            }
+        },
+        {
+            "name": "ARMORED_TEXT",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "APP_BOARD": "CHASSIS",
+                "APP_ROBOT": "ARMORED",
+                "APP_LOG_MODE": "TEXT"
+            }
+        },
+        {
+            "name": "ARMORED_VOFA",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "APP_BOARD": "CHASSIS",
+                "APP_ROBOT": "ARMORED",
+                "APP_LOG_MODE": "VOFA"
+            }
+        },
+        {
+            "name": "NAVIGATION_GIMBAL_TEXT",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "APP_ROBOT": "NAVIGATION",
+                "APP_BOARD": "GIMBAL",
+                "APP_LOG_MODE": "TEXT"
+            }
+        },
+        {
+            "name": "NAVIGATION_GIMBAL_VOFA",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "APP_ROBOT": "NAVIGATION",
+                "APP_BOARD": "GIMBAL",
+                "APP_LOG_MODE": "VOFA"
+            }
+        },
+        {
+            "name": "ARMORED_GIMBAL_TEXT",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "APP_ROBOT": "ARMORED",
+                "APP_BOARD": "GIMBAL",
+                "APP_LOG_MODE": "TEXT"
+            }
+        },
+        {
+            "name": "ARMORED_GIMBAL_VOFA",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "APP_ROBOT": "ARMORED",
+                "APP_BOARD": "GIMBAL",
+                "APP_LOG_MODE": "VOFA"
             }
         }
     ],
@@ -130,6 +188,30 @@
         {
             "name": "CHASSIS_UI_DEMO",
             "configurePreset": "CHASSIS_UI_DEMO"
+        },
+        {
+            "name": "ARMORED_TEXT",
+            "configurePreset": "ARMORED_TEXT"
+        },
+        {
+            "name": "ARMORED_VOFA",
+            "configurePreset": "ARMORED_VOFA"
+        },
+        {
+            "name": "NAVIGATION_GIMBAL_TEXT",
+            "configurePreset": "NAVIGATION_GIMBAL_TEXT"
+        },
+        {
+            "name": "NAVIGATION_GIMBAL_VOFA",
+            "configurePreset": "NAVIGATION_GIMBAL_VOFA"
+        },
+        {
+            "name": "ARMORED_GIMBAL_TEXT",
+            "configurePreset": "ARMORED_GIMBAL_TEXT"
+        },
+        {
+            "name": "ARMORED_GIMBAL_VOFA",
+            "configurePreset": "ARMORED_GIMBAL_VOFA"
         }
     ]
 }

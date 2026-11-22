@@ -8,11 +8,39 @@
 #include "drv_referee.h"
 
 #include <string.h>
+#include <stddef.h>
 
 _Static_assert(sizeof(drv_referee_frame_header_t) == PROTOCOL_HEADER_LEN,
                "Referee header must be packed");
 _Static_assert(sizeof(drv_referee_game_status_t) == 11U, "Referee game status must be packed");
-_Static_assert(sizeof(drv_referee_robot_status_t) == 13U, "Referee robot status must be packed");
+_Static_assert(sizeof(drv_referee_game_result_t) == 1U, "Invalid game result size");
+_Static_assert(sizeof(drv_referee_game_robot_hp_t) == 24U, "Invalid 2027 robot HP size");
+_Static_assert(sizeof(drv_referee_event_data_t) == 8U, "Invalid 2027 event size");
+_Static_assert(sizeof(drv_referee_warning_t) == 3U, "Invalid warning size");
+_Static_assert(sizeof(drv_referee_dart_info_t) == 3U, "Invalid dart info size");
+_Static_assert(sizeof(drv_referee_robot_status_t) == 17U, "Invalid 2027 robot status size");
+_Static_assert(offsetof(drv_referee_robot_status_t, bullet_speed_limit) == 12U,
+               "Invalid bullet speed offset");
+_Static_assert(sizeof(drv_referee_power_heat_t) == 14U, "Invalid power heat size");
+_Static_assert(sizeof(drv_referee_robot_pos_t) == 12U, "Invalid robot position size");
+_Static_assert(sizeof(drv_referee_buff_t) == 7U, "Invalid 2027 buff size");
+_Static_assert(sizeof(drv_referee_hurt_data_t) == 7U, "Invalid 2027 hurt size");
+_Static_assert(sizeof(drv_referee_shoot_data_t) == 7U, "Invalid shoot size");
+_Static_assert(sizeof(drv_referee_projectile_allowance_t) == 8U, "Invalid projectile size");
+_Static_assert(sizeof(drv_referee_rfid_status_t) == 6U, "Invalid 2027 RFID size");
+_Static_assert(sizeof(drv_referee_dart_client_cmd_t) == 6U, "Invalid dart command size");
+_Static_assert(sizeof(drv_referee_ground_robot_pos_t) == 40U, "Invalid ground position size");
+_Static_assert(sizeof(drv_referee_radar_mark_data_t) == 2U, "Invalid radar mark size");
+_Static_assert(sizeof(drv_referee_sentry_info_t) == 14U, "Invalid 2027 sentry size");
+_Static_assert(sizeof(drv_referee_radar_info_t) == 8U, "Invalid 2027 radar size");
+_Static_assert(offsetof(drv_referee_interaction_data_t, user_data) == 6U,
+               "Invalid interaction offset");
+_Static_assert(sizeof(drv_referee_interaction_data_t) == 118U, "Invalid interaction size");
+_Static_assert(sizeof(drv_referee_interaction_layer_delete_t) == 2U, "Invalid delete size");
+_Static_assert(sizeof(drv_referee_interaction_figure_t) == 15U, "Invalid figure size");
+_Static_assert(sizeof(drv_referee_interaction_string_t) == 45U, "Invalid string size");
+_Static_assert(sizeof(drv_referee_sentry_cmd_t) == 4U, "Invalid sentry command size");
+_Static_assert(sizeof(drv_referee_radar_cmd_t) == 13U, "Invalid 2027 radar command size");
 
 /* ════════════════════════════════════════════════════
  * CRC 查表与计算
@@ -115,7 +143,7 @@ static uint16_t calc_crc16(const uint8_t *data, uint16_t len)
  */
 static void handle_game_status(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_game_status_t))
+    if (len != sizeof(drv_referee_game_status_t))
     {
         return;
     }
@@ -132,7 +160,7 @@ static void handle_game_status(drv_referee_context_t *ctx, const uint8_t *data, 
  */
 static void handle_game_result(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_game_result_t))
+    if (len != sizeof(drv_referee_game_result_t))
     {
         return;
     }
@@ -149,7 +177,7 @@ static void handle_game_result(drv_referee_context_t *ctx, const uint8_t *data, 
  */
 static void handle_game_robot_hp(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_game_robot_hp_t))
+    if (len != sizeof(drv_referee_game_robot_hp_t))
     {
         return;
     }
@@ -166,7 +194,7 @@ static void handle_game_robot_hp(drv_referee_context_t *ctx, const uint8_t *data
  */
 static void handle_event_data(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_event_data_t))
+    if (len != sizeof(drv_referee_event_data_t))
     {
         return;
     }
@@ -183,7 +211,7 @@ static void handle_event_data(drv_referee_context_t *ctx, const uint8_t *data, u
  */
 static void handle_referee_warning(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_warning_t))
+    if (len != sizeof(drv_referee_warning_t))
     {
         return;
     }
@@ -200,7 +228,7 @@ static void handle_referee_warning(drv_referee_context_t *ctx, const uint8_t *da
  */
 static void handle_dart_info(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_dart_info_t))
+    if (len != sizeof(drv_referee_dart_info_t))
     {
         return;
     }
@@ -219,13 +247,14 @@ static void handle_robot_status(drv_referee_context_t *ctx, const uint8_t *data,
 {
     drv_referee_robot_status_t robot_status;
 
-    if (len < sizeof(robot_status))
+    if (len != sizeof(robot_status))
     {
         return;
     }
     memcpy(&robot_status, data, sizeof(robot_status));
 
-    /* 此处仅更新裁判任务私有解析状态；跨任务发布由裁判任务复制到互斥快照。 */
+    /* 控制中断会读取这组数据，发布过程必须保持完整。 */
+
     ctx->s_referee_data.robot_status = robot_status;
     ctx->result.updated_mask |= REFEREE_FLAG_ROBOT_STATUS;
 }
@@ -239,7 +268,7 @@ static void handle_robot_status(drv_referee_context_t *ctx, const uint8_t *data,
  */
 static void handle_power_heat(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_power_heat_t))
+    if (len != sizeof(drv_referee_power_heat_t))
     {
         return;
     }
@@ -256,7 +285,7 @@ static void handle_power_heat(drv_referee_context_t *ctx, const uint8_t *data, u
  */
 static void handle_robot_pos(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_robot_pos_t))
+    if (len != sizeof(drv_referee_robot_pos_t))
     {
         return;
     }
@@ -273,7 +302,7 @@ static void handle_robot_pos(drv_referee_context_t *ctx, const uint8_t *data, ui
  */
 static void handle_buff(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_buff_t))
+    if (len != sizeof(drv_referee_buff_t))
     {
         return;
     }
@@ -288,15 +317,6 @@ static void handle_buff(drv_referee_context_t *ctx, const uint8_t *data, uint16_
  * @param  len          数据段长度，小于对应结构体大小时直接忽略，保留旧值。
  * @note   仅由裁判任务内的解析器调用；复制协议结构所需字节，额外载荷不保存。
  */
-static void handle_air_support(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
-{
-    if (len < sizeof(drv_referee_air_support_data_t))
-    {
-        return;
-    }
-    memcpy(&ctx->s_referee_data.air_support, data, sizeof(drv_referee_air_support_data_t));
-    ctx->result.updated_mask |= REFEREE_FLAG_AIR_SUPPORT;
-}
 
 /* ── 0x0206 伤害状态 ──────────────────────────── */
 /**
@@ -307,7 +327,7 @@ static void handle_air_support(drv_referee_context_t *ctx, const uint8_t *data, 
  */
 static void handle_hurt_data(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_hurt_data_t))
+    if (len != sizeof(drv_referee_hurt_data_t))
     {
         return;
     }
@@ -324,7 +344,7 @@ static void handle_hurt_data(drv_referee_context_t *ctx, const uint8_t *data, ui
  */
 static void handle_shoot_data(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_shoot_data_t))
+    if (len != sizeof(drv_referee_shoot_data_t))
     {
         return;
     }
@@ -342,7 +362,7 @@ static void handle_shoot_data(drv_referee_context_t *ctx, const uint8_t *data, u
 static void handle_projectile_allowance(drv_referee_context_t *ctx, const uint8_t *data,
                                         uint16_t len)
 {
-    if (len < sizeof(drv_referee_projectile_allowance_t))
+    if (len != sizeof(drv_referee_projectile_allowance_t))
     {
         return;
     }
@@ -359,7 +379,7 @@ static void handle_projectile_allowance(drv_referee_context_t *ctx, const uint8_
  */
 static void handle_rfid_status(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_rfid_status_t))
+    if (len != sizeof(drv_referee_rfid_status_t))
     {
         return;
     }
@@ -376,7 +396,7 @@ static void handle_rfid_status(drv_referee_context_t *ctx, const uint8_t *data, 
  */
 static void handle_dart_client_cmd(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_dart_client_cmd_t))
+    if (len != sizeof(drv_referee_dart_client_cmd_t))
     {
         return;
     }
@@ -393,7 +413,7 @@ static void handle_dart_client_cmd(drv_referee_context_t *ctx, const uint8_t *da
  */
 static void handle_ground_robot_pos(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_ground_robot_pos_t))
+    if (len != sizeof(drv_referee_ground_robot_pos_t))
     {
         return;
     }
@@ -410,7 +430,7 @@ static void handle_ground_robot_pos(drv_referee_context_t *ctx, const uint8_t *d
  */
 static void handle_radar_mark(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_radar_mark_data_t))
+    if (len != sizeof(drv_referee_radar_mark_data_t))
     {
         return;
     }
@@ -427,7 +447,7 @@ static void handle_radar_mark(drv_referee_context_t *ctx, const uint8_t *data, u
  */
 static void handle_sentry_info(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_sentry_info_t))
+    if (len != sizeof(drv_referee_sentry_info_t))
     {
         return;
     }
@@ -444,7 +464,7 @@ static void handle_sentry_info(drv_referee_context_t *ctx, const uint8_t *data, 
  */
 static void handle_radar_info(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
 {
-    if (len < sizeof(drv_referee_radar_info_t))
+    if (len != sizeof(drv_referee_radar_info_t))
     {
         return;
     }
@@ -462,51 +482,52 @@ static void handle_radar_info(drv_referee_context_t *ctx, const uint8_t *data, u
  * @param  len          载荷长度，至少 6 字节。
  * @note   当前 UI、哨兵和雷达交互分支仅有框架，不发布业务字段或更新位。
  */
-static void handle_robot_interaction(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
+static int interaction_payload_is_valid(const uint8_t *data, uint16_t len)
 {
-    (void)ctx;
-    if (len < 6)
+    if (data == NULL || len < REFEREE_INTERACTION_HEADER_LEN ||
+        len > REFEREE_INTERACTION_PAYLOAD_MAX)
     {
-        return; /* 至少需要 data_cmd_id + sender_id + receiver_id */
+        return 0;
     }
-
     uint16_t sub_cmd_id;
-    memcpy(&sub_cmd_id, data, sizeof(sub_cmd_id)); /* 前2字节为子命令ID */
-
-    uint16_t user_data_len = len - 6;
-
+    memcpy(&sub_cmd_id, data, sizeof(sub_cmd_id));
+    uint16_t user_data_len = len - REFEREE_INTERACTION_HEADER_LEN;
+    if (sub_cmd_id >= SUB_CMD_ROBOT_DATA_MIN && sub_cmd_id <= SUB_CMD_ROBOT_DATA_MAX)
+    {
+        return 1;
+    }
     switch (sub_cmd_id)
     {
-        case SUB_CMD_LAYER_DELETE:
-            /* 删除图层, 暂不处理 */
-            break;
-        case SUB_CMD_DRAW_ONE_GRAPHIC:
-            /* 绘制1个图形, 暂不处理 */
-            break;
-        case SUB_CMD_DRAW_TWO_GRAPHIC:
-            /* 绘制2个图形, 暂不处理 */
-            break;
-        case SUB_CMD_DRAW_FIVE_GRAPHIC:
-            /* 绘制5个图形, 暂不处理 */
-            break;
-        case SUB_CMD_DRAW_SEVEN_GRAPHIC:
-            /* 绘制7个图形, 暂不处理 */
-            break;
-        case SUB_CMD_SENTRY_CMD:
-            if (user_data_len >= sizeof(drv_referee_sentry_cmd_t))
-            {
-                /* 哨兵命令, 暂不处理 */
-            }
-            break;
-        case SUB_CMD_RADAR_CMD:
-            if (user_data_len >= sizeof(drv_referee_radar_cmd_t))
-            {
-                /* 雷达命令, 暂不处理 */
-            }
-            break;
-        default:
-            break;
+    case SUB_CMD_LAYER_DELETE:
+        return user_data_len == 2U;
+    case SUB_CMD_DRAW_ONE_GRAPHIC:
+        return user_data_len == 15U;
+    case SUB_CMD_DRAW_TWO_GRAPHIC:
+        return user_data_len == 30U;
+    case SUB_CMD_DRAW_FIVE_GRAPHIC:
+        return user_data_len == 75U;
+    case SUB_CMD_DRAW_SEVEN_GRAPHIC:
+        return user_data_len == 105U;
+    case SUB_CMD_DRAW_STRING:
+        return user_data_len == 45U;
+    case SUB_CMD_SENTRY_CMD:
+        return user_data_len == 4U;
+    case SUB_CMD_RADAR_CMD:
+        return user_data_len == 13U;
+    default:
+        return 0;
     }
+}
+static void handle_robot_interaction(drv_referee_context_t *ctx, const uint8_t *data, uint16_t len)
+{
+    if (!interaction_payload_is_valid(data, len))
+    {
+        return;
+    }
+    memset(&ctx->s_referee_data.interaction, 0, sizeof(ctx->s_referee_data.interaction));
+    memcpy(&ctx->s_referee_data.interaction, data, len);
+    ctx->s_referee_data.interaction_data_length = len - REFEREE_INTERACTION_HEADER_LEN;
+    ctx->result.updated_mask |= REFEREE_FLAG_INTERACTION;
 }
 
 /* ════════════════════════════════════════════════════
@@ -532,71 +553,69 @@ static int parse_referee_packet(drv_referee_context_t *ctx, const uint8_t *buffe
     /* 完整帧已经校验，只检查各命令所需的业务载荷长度。 */
     switch (cmd_id)
     {
-        case CMD_GAME_STATUS:
-            handle_game_status(ctx, data_ptr, data_len);
-            break;
-        case CMD_GAME_RESULT:
-            handle_game_result(ctx, data_ptr, data_len);
-            break;
-        case CMD_GAME_ROBOT_HP:
-            handle_game_robot_hp(ctx, data_ptr, data_len);
-            break;
-        case CMD_EVENT_DATA:
-            handle_event_data(ctx, data_ptr, data_len);
-            break;
-        case CMD_REFEREE_WARNING:
-            handle_referee_warning(ctx, data_ptr, data_len);
-            break;
-        case CMD_DART_INFO:
-            handle_dart_info(ctx, data_ptr, data_len);
-            break;
-        case CMD_ROBOT_STATUS:
-            handle_robot_status(ctx, data_ptr, data_len);
-            break;
-        case CMD_POWER_HEAT_DATA:
-            handle_power_heat(ctx, data_ptr, data_len);
-            break;
-        case CMD_ROBOT_POS:
-            handle_robot_pos(ctx, data_ptr, data_len);
-            break;
-        case CMD_BUFF_DATA:
-            handle_buff(ctx, data_ptr, data_len);
-            break;
-        case CMD_AIR_SUPPORT_DATA:
-            handle_air_support(ctx, data_ptr, data_len);
-            break;
-        case CMD_HURT_DATA:
-            handle_hurt_data(ctx, data_ptr, data_len);
-            break;
-        case CMD_SHOOT_DATA:
-            handle_shoot_data(ctx, data_ptr, data_len);
-            break;
-        case CMD_PROJECTILE_ALLOWANCE:
-            handle_projectile_allowance(ctx, data_ptr, data_len);
-            break;
-        case CMD_RFID_STATUS:
-            handle_rfid_status(ctx, data_ptr, data_len);
-            break;
-        case CMD_DART_CLIENT_CMD:
-            handle_dart_client_cmd(ctx, data_ptr, data_len);
-            break;
-        case CMD_GROUND_ROBOT_POS:
-            handle_ground_robot_pos(ctx, data_ptr, data_len);
-            break;
-        case CMD_RADAR_MARK_DATA:
-            handle_radar_mark(ctx, data_ptr, data_len);
-            break;
-        case CMD_SENTRY_INFO:
-            handle_sentry_info(ctx, data_ptr, data_len);
-            break;
-        case CMD_RADAR_INFO:
-            handle_radar_info(ctx, data_ptr, data_len);
-            break;
-        case CMD_ROBOT_INTERACTION:
-            handle_robot_interaction(ctx, data_ptr, data_len);
-            break;
-        default:
-            return -2; /* 未知命令ID */
+    case CMD_GAME_STATUS:
+        handle_game_status(ctx, data_ptr, data_len);
+        break;
+    case CMD_GAME_RESULT:
+        handle_game_result(ctx, data_ptr, data_len);
+        break;
+    case CMD_GAME_ROBOT_HP:
+        handle_game_robot_hp(ctx, data_ptr, data_len);
+        break;
+    case CMD_EVENT_DATA:
+        handle_event_data(ctx, data_ptr, data_len);
+        break;
+    case CMD_REFEREE_WARNING:
+        handle_referee_warning(ctx, data_ptr, data_len);
+        break;
+    case CMD_DART_INFO:
+        handle_dart_info(ctx, data_ptr, data_len);
+        break;
+    case CMD_ROBOT_STATUS:
+        handle_robot_status(ctx, data_ptr, data_len);
+        break;
+    case CMD_POWER_HEAT_DATA:
+        handle_power_heat(ctx, data_ptr, data_len);
+        break;
+    case CMD_ROBOT_POS:
+        handle_robot_pos(ctx, data_ptr, data_len);
+        break;
+    case CMD_BUFF_DATA:
+        handle_buff(ctx, data_ptr, data_len);
+        break;
+
+    case CMD_HURT_DATA:
+        handle_hurt_data(ctx, data_ptr, data_len);
+        break;
+    case CMD_SHOOT_DATA:
+        handle_shoot_data(ctx, data_ptr, data_len);
+        break;
+    case CMD_PROJECTILE_ALLOWANCE:
+        handle_projectile_allowance(ctx, data_ptr, data_len);
+        break;
+    case CMD_RFID_STATUS:
+        handle_rfid_status(ctx, data_ptr, data_len);
+        break;
+    case CMD_DART_CLIENT_CMD:
+        handle_dart_client_cmd(ctx, data_ptr, data_len);
+        break;
+    case CMD_GROUND_ROBOT_POS:
+        handle_ground_robot_pos(ctx, data_ptr, data_len);
+        break;
+    case CMD_RADAR_MARK_DATA:
+        handle_radar_mark(ctx, data_ptr, data_len);
+        break;
+    case CMD_SENTRY_INFO:
+        handle_sentry_info(ctx, data_ptr, data_len);
+        break;
+    case CMD_RADAR_INFO:
+        handle_radar_info(ctx, data_ptr, data_len);
+        break;
+    case CMD_ROBOT_INTERACTION:
+        handle_robot_interaction(ctx, data_ptr, data_len);
+        break;
+    default:
+        return -2; /* 未知命令ID */
     }
 
     return 0;
@@ -708,7 +727,8 @@ const drv_referee_global_t *drv_referee_get_data(drv_referee_context_t *ctx)
 /**
  * @brief  取走从上次清除后成功更新过的字段位，并清零更新位。
  * @return REFEREE_FLAG_* 按位或组成的掩码。
- * @note   不清除业务数据或 process 返回的本次结果；新任务直接使用返回结果，旧调用者仍可消费累计更新位。
+ * @note   不清除业务数据或 process
+ * 返回的本次结果；新任务直接使用返回结果，旧调用者仍可消费累计更新位。
  */
 uint32_t drv_referee_get_and_clear_flags(drv_referee_context_t *ctx)
 {
@@ -737,20 +757,20 @@ const char *drv_referee_parse_error_string(int result)
 {
     switch (result)
     {
-        case 0:
-            return "Parse success";
-        case -1:
-            return "Length insufficient";
-        case -2:
-            return "Unknown command ID";
-        case -3:
-            return "SOF error (not 0xA5)";
-        case -4:
-            return "CRC mismatch";
-        case -5:
-            return "Frame too large";
-        default:
-            return "Unknown error";
+    case 0:
+        return "Parse success";
+    case -1:
+        return "Length insufficient";
+    case -2:
+        return "Unknown command ID";
+    case -3:
+        return "SOF error (not 0xA5)";
+    case -4:
+        return "CRC mismatch";
+    case -5:
+        return "Frame too large";
+    default:
+        return "Unknown error";
     }
 }
 
@@ -800,6 +820,10 @@ uint16_t drv_referee_build_frame(uint8_t *frame, uint16_t capacity, uint16_t cmd
         return 0U;
     }
 
+    if (cmd_id == CMD_ROBOT_INTERACTION && !interaction_payload_is_valid(payload, payload_len))
+    {
+        return 0;
+    }
     if (frame_len > capacity)
     {
         return 0U;

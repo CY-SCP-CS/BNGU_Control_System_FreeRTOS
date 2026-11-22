@@ -7,7 +7,8 @@
 #include <string.h>
 #include "lib_physical.h"
 #include "legacy_adapter.h"
-#include "app_sentry_can.h"
+#include "app_vehicle_can.h"
+#include "app_chassis_comm.h"
 #include "drv_referee.h"
 int main(void)
 {
@@ -36,8 +37,8 @@ int main(void)
         assert(app_chassis_comm_decode(0x111, (uint8_t *)wire, 8, &rx, &mask));
         app_ctrl_can_msg_t message = {.type = APP_CAN_CHASSIS_CMD};
         message.value.chassis = rx.speed;
-        app_can_frame_t frames[APP_SENTRY_CAN_MAX_FRAMES];
-        assert(app_sentry_can_encode(&message, frames) == 1);
+        app_can_frame_t frames[APP_VEHICLE_CAN_MAX_FRAMES];
+        assert(app_vehicle_can_encode(&message, frames) == 1);
         assert(memcmp(frames[0].data, wire, 8) == 0);
     }
     drv_referee_context_t first, second;

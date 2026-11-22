@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse
 import re
 import json
+from check_dependencies import audit
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--strict-docs", action="store_true")
 args = parser.parse_args()
@@ -39,6 +40,7 @@ for path in (root / "Self_core").rglob("*"):
         if missing:
             line = text[:m.start()].count("\n") + 1
             docs.append(f"{relative}:{line}: {name}: {', '.join(missing)}")
+errors.extend(audit(root)["errors"])
 report = {"dependency_errors": errors, "documentation_findings": docs}
 output = root / "build" / "architecture_audit.json"
 output.parent.mkdir(parents=True, exist_ok=True)

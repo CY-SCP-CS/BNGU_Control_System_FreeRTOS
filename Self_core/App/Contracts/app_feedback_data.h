@@ -5,7 +5,7 @@
 #ifndef APP_FEEDBACK_DATA_H
 #define APP_FEEDBACK_DATA_H
 #include <stdint.h>
-#include "app_motor_role.h"
+#include "App/Vehicles/Sentry/Contracts/app_motor_role.h"
 
 /** @brief 已验证的电机物理反馈；CAN 任务写，互斥快照读，机构方向由算法解释。 */
 typedef struct

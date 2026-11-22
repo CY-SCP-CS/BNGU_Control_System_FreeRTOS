@@ -19,22 +19,16 @@ typedef struct
 } app_rtos_log_msg_t;
 
 /**
- * @brief  按等级/模式过滤后，非阻塞投递定长事件
+ * @brief  按等级/模式过滤后，非阻塞投递定长事件。
+ * @param[in] source 来源任务编号 TASK_*。
+ * @param[in] level 日志等级，1=信息、2=告警、3=错误。
+ * @param[in] code 稳定事件码，语义由事件定义决定。
+ * @param[in] a 第一个整数参数，单位由事件码约定，立即复制。
+ * @param[in] b 第二个整数参数，单位由事件码约定，立即复制。
+ * @return 无返回值；模式/等级过滤直接返回，队列满累计 COUNT_LOG_DROP。
  * @note   TEXT 由 APP_LOG_MIN_LEVEL 选择等级；VOFA 过滤文本事件但不影响健康状态和计数。
  *          队列满累计 COUNT_LOG_DROP；调用方不格式化、不等待串口。
  */
 void app_rtos_log(uint8_t source, uint8_t level, uint16_t code, int32_t a, int32_t b);
-
-/**
- * @brief  系统日志任务入口；日志提交接口见本头文件，UART 发送由任务独占
- * @param  argument CMSIS-RTOS2 任务入口参数，当前创建时传 NULL。
- * @note   由任务表注册并由调度器调用，业务代码不直接调用任务入口。
- */
-void Start_sys_log_Task(void *argument);
-
-/** @brief 调度器启动前创建本模块的对象与初始数据。 */
-bool app_task_log_init(void);
-/** @brief 仅启动失败回滚时调用，调用前确保所属任务未运行。 */
-void app_task_log_deinit(void);
 
 #endif

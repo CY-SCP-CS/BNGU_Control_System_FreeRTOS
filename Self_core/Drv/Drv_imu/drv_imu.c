@@ -249,15 +249,15 @@ void drv_imu_reset_filter(drv_imu_t *imu)
     memset(&imu->filter, 0, sizeof(imu->filter));
     switch (imu->algorithm)
     {
-        case DRV_IMU_ALGO_EKF:
-            drv_imu_ekf_reset(imu);
-            break;
-        case DRV_IMU_ALGO_VQF:
-            drv_imu_vqf_reset(imu);
-            break;
-        default:
-            imu->algorithm = DRV_IMU_ALGO_MAHONY;
-            break;
+    case DRV_IMU_ALGO_EKF:
+        drv_imu_ekf_reset(imu);
+        break;
+    case DRV_IMU_ALGO_VQF:
+        drv_imu_vqf_reset(imu);
+        break;
+    default:
+        imu->algorithm = DRV_IMU_ALGO_MAHONY;
+        break;
     }
 }
 
@@ -269,17 +269,17 @@ void drv_imu_update(drv_imu_t *imu, float dt)
     }
     switch (imu->algorithm)
     {
-        case DRV_IMU_ALGO_MAHONY:
-            drv_imu_mahony_update(imu, dt);
-            break;
-        case DRV_IMU_ALGO_EKF:
-            drv_imu_ekf_update(imu, dt);
-            break;
-        case DRV_IMU_ALGO_VQF:
-            drv_imu_vqf_update(imu, dt);
-            break;
-        default:
-            break;
+    case DRV_IMU_ALGO_MAHONY:
+        drv_imu_mahony_update(imu, dt);
+        break;
+    case DRV_IMU_ALGO_EKF:
+        drv_imu_ekf_update(imu, dt);
+        break;
+    case DRV_IMU_ALGO_VQF:
+        drv_imu_vqf_update(imu, dt);
+        break;
+    default:
+        break;
     }
 }
 
@@ -527,15 +527,15 @@ void drv_imu_quat_to_euler(drv_imu_t *imu)
     drv_imu_get_body_quat(imu, &body_quat);
     switch (imu->euler_mode)
     {
-        case DRV_IMU_EULER_ZYX:
-            euler_zyx(&body_quat, &imu->euler);
-            break;
-        case DRV_IMU_EULER_YXZ:
-            euler_yxz(&body_quat, &imu->euler);
-            break;
-        default:
-            euler_xyz(&body_quat, &imu->euler);
-            break;
+    case DRV_IMU_EULER_ZYX:
+        euler_zyx(&body_quat, &imu->euler);
+        break;
+    case DRV_IMU_EULER_YXZ:
+        euler_yxz(&body_quat, &imu->euler);
+        break;
+    default:
+        euler_xyz(&body_quat, &imu->euler);
+        break;
     }
 }
 
@@ -645,4 +645,46 @@ void drv_imu_parse_gyro_raw(drv_imu_t *imu, const uint8_t bytes[7])
     imu->gyro_raw.x = (int16_t)((bytes[2] << 8) | bytes[1]);
     imu->gyro_raw.y = (int16_t)((bytes[4] << 8) | bytes[3]);
     imu->gyro_raw.z = (int16_t)((bytes[6] << 8) | bytes[5]);
+}
+
+uint8_t drv_imu_filter_is_ready(const drv_imu_t *imu)
+{
+    if (!imu)
+    {
+        return 0U;
+    }
+    if (imu->algorithm == DRV_IMU_ALGO_VQF)
+    {
+        const drv_imu_vqf_state_t *s = &imu->filter.vqf;
+        const drv_imu_vqf_config_t *c = &imu->vqf_config;
+        if (!s->lp_initialized[VQF_LP_ACC])
+        {
+            return 0U;
+        }
+        if (c->rest_bias_enabled &&
+            (!s->lp_initialized[VQF_LP_REST_GYR] || !s->lp_initialized[VQF_LP_REST_ACC]))
+        {
+            return 0U;
+        }
+        if ((c->motion_bias_enabled || c->rest_bias_enabled) &&
+            (!s->lp_initialized[VQF_LP_MOTION_R] || !s->lp_initialized[VQF_LP_MOTION_BIAS]))
+        {
+            return 0U;
+        }
+        return 1U;
+    }
+    return imu->algorithm == DRV_IMU_ALGO_MAHONY || imu->algorithm == DRV_IMU_ALGO_EKF;
+}
+void drv_imu_get_body_acc(const drv_imu_t *imu, lib_vec3f_t *out)
+{
+    if (!imu || !out)
+    {
+        return;
+    }
+    const float sensor[3] = {imu->acc.x, imu->acc.y, imu->acc.z};
+    float body[3];
+    imu_filter_quat_rotate(&imu->mounting_quat, sensor, body);
+    out->x = body[0];
+    out->y = body[1];
+    out->z = body[2];
 }

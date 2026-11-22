@@ -6,72 +6,65 @@
 #include "app_task_telemetry_internal.h"
 #include "app_rtos_objects.h"
 #include <string.h>
-#include "app_board_config.h"
+#include "app_vehicle_config.h"
 #include "lib_physical.h"
 
 static osMutexId_t ctrl_state_mutex;
 static app_ctrl_state_t s_ctrl;
 
-/**
- * @brief  读取完整控制状态快照
- * @param  v            输出控制状态，锁不可用时保留旧副本
- * @return true=复制成功，false=参数/句柄无效或锁暂不可用
- * @note   任务上下文调用，ctrl_state_mutex 保护；超时为 0。
- */
-bool app_rtos_ctrl_read(app_ctrl_state_t *v)
+bool app_rtos_ctrl_read(app_ctrl_state_t *value)
 {
-    return app_rtos_snapshot_read(ctrl_state_mutex, &s_ctrl, v, sizeof(*v));
+    return app_rtos_snapshot_read(ctrl_state_mutex, &s_ctrl, value, sizeof(*value));
 }
 
-/**
- * @brief  读取控制快照中的 VOFA 九通道
- * @param  v            至少容纳 9 个 float 的输出数组，失败保留旧值
- * @return true=复制成功，false=参数/句柄无效或锁暂不可用
- * @note   使用 ctrl_state_mutex，任务上下文获取锁超时为 0。
- */
-bool app_rtos_vofa_read(float v[9])
+/* 公共接口的参数、单位和失败策略以 app_task_telemetry.h 为准。 */
+bool app_rtos_vofa_read(float value[9])
 {
-    static app_ctrl_state_t state;
-    if (!v || !app_rtos_ctrl_read(&state))
+    if (!value || !ctrl_state_mutex || osMutexAcquire(ctrl_state_mutex, 0) != osOK)
     {
         return false;
     }
+    /* 锁内只提取所需字段；不再保存一份完整控制状态作为读取工作区。 */
 #if APP_BOARD_HAS_CHASSIS
-    v[0] = lib_m_to_mm(state.chassis.target.vx_speed);
-    v[1] = lib_m_to_mm(state.chassis.state.cur_speed.vx_speed);
-    v[2] = lib_m_to_mm(state.chassis.target.vy_speed);
-    v[3] = lib_m_to_mm(state.chassis.state.cur_speed.vy_speed);
-    v[4] = state.chassis.target.vw_speed;
-    v[5] = state.chassis.state.cur_speed.vw_speed;
-    v[6] = state.chassis.state.cur_power;
-    v[7] = state.chassis.state.power_scale;
-    v[8] = 0.0f;
+    float channels[9] = {
+        s_ctrl.chassis.target.vx_speed,
+        s_ctrl.chassis.state.cur_speed.vx_speed,
+        s_ctrl.chassis.target.vy_speed,
+        s_ctrl.chassis.state.cur_speed.vy_speed,
+        s_ctrl.chassis.target.vw_speed,
+        s_ctrl.chassis.state.cur_speed.vw_speed,
+        s_ctrl.chassis.state.cur_power,
+        s_ctrl.chassis.state.power_scale,
+        0.0f,
+    };
+#elif APP_BOARD_HAS_SHOOT
+    float channels[9] = {
+        s_ctrl.shoot.disc_nominal,      s_ctrl.shoot.disc_speed,
+        s_ctrl.shoot.disc_integral,     s_ctrl.shoot.disc_effort_raw,
+        -s_ctrl.shoot.friction_nominal, s_ctrl.shoot.friction_r_speed,
+        s_ctrl.shoot.friction_nominal,  s_ctrl.shoot.friction_l_speed,
+        s_ctrl.shoot.disc_encoder_raw,
+    };
 #else
-    v[0] = state.shoot.disc_nominal;
-    v[1] = state.shoot.disc_speed;
-    v[2] = state.shoot.disc_integral;
-    v[3] = state.shoot.disc_effort_raw;
-    v[4] = -state.shoot.friction_nominal;
-    v[5] = state.shoot.friction_r_speed;
-    v[6] = state.shoot.friction_nominal;
-    v[7] = state.shoot.friction_l_speed;
-    v[8] = state.shoot.disc_encoder_raw;
+    float channels[9] = {0};
 #endif
+    osMutexRelease(ctrl_state_mutex);
+#if APP_BOARD_HAS_CHASSIS
+    /* 保持原显示单位：前四个通道 m/s → mm/s，转换不占用共享锁。 */
+    for (unsigned i = 0; i < 4; i++)
+    {
+        channels[i] = lib_m_to_mm(channels[i]);
+    }
+#endif
+    memcpy(value, channels, sizeof(channels));
     return true;
 }
 
-/**
- * @brief  发布云台控制输出与 IMU roll 诊断值
- * @param  v            有效的云台输出指针
- * @param  roll         IMU roll，rad；仅保存诊断，不占用发射 VOFA 通道
- * @param  tick         本轮控制时间，单位内核 tick
- * @note   由云台控制任务调用；持有 ctrl_state_mutex 只更新云台字段，保留发射字段。
- */
-void app_rtos_gimbal_publish(const app_gimbal_output_t *v, float roll, uint32_t tick)
+void app_rtos_gimbal_publish(const app_gimbal_output_t *value, float roll, uint32_t tick)
 {
     if (osMutexAcquire(ctrl_state_mutex, 0) == osOK)
     {
-        s_ctrl.gimbal = *v;
+        s_ctrl.gimbal = *value;
         s_ctrl.gimbal_tick = tick;
         s_ctrl.imu_roll_rad = roll;
         osMutexRelease(ctrl_state_mutex);
@@ -82,17 +75,11 @@ void app_rtos_gimbal_publish(const app_gimbal_output_t *v, float roll, uint32_t 
     }
 }
 
-/**
- * @brief  发布发射输出及原发射 VOFA 七通道
- * @param  v            有效的发射输出指针，包含电流及具名遥测值
- * @param  tick         本轮控制时间，单位内核 tick
- * @note   由发射任务调用；持有 ctrl_state_mutex 更新发射字段，保留云台发布的通道 7。
- */
-void app_rtos_shoot_publish(const app_shoot_output_t *v, uint32_t tick)
+void app_rtos_shoot_publish(const app_shoot_output_t *value, uint32_t tick)
 {
     if (osMutexAcquire(ctrl_state_mutex, 0) == osOK)
     {
-        s_ctrl.shoot = *v;
+        s_ctrl.shoot = *value;
         s_ctrl.shoot_tick = tick;
         osMutexRelease(ctrl_state_mutex);
     }
@@ -102,17 +89,11 @@ void app_rtos_shoot_publish(const app_shoot_output_t *v, uint32_t tick)
     }
 }
 
-/**
- * @brief  发布底盘控制输出及 VOFA 九通道
- * @param  v            有效的底盘输出指针
- * @param  tick         本轮控制时间，单位内核 tick
- * @note   由底盘控制任务调用；通道依次为 x/y/omega 目标与实际值、功率、缩放系数。
- */
-void app_rtos_chassis_publish(const app_chassis_output_t *v, uint32_t tick)
+void app_rtos_chassis_publish(const app_chassis_output_t *value, uint32_t tick)
 {
     if (osMutexAcquire(ctrl_state_mutex, 0) == osOK)
     {
-        s_ctrl.chassis = *v;
+        s_ctrl.chassis = *value;
         s_ctrl.chassis_tick = tick;
         osMutexRelease(ctrl_state_mutex);
     }

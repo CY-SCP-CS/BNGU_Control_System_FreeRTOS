@@ -1,5 +1,7 @@
 # 应用配置只定义一次；App 算法与任务分别声明依赖。
 add_library(self_config INTERFACE)
+target_compile_definitions(self_config INTERFACE
+    APP_RTOS_ENABLE_EXAMPLES=$<BOOL:${APP_RTOS_ENABLE_EXAMPLES}>)
 target_include_directories(self_config INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/App/Config")
@@ -20,12 +22,12 @@ endif()
 if(APP_ROBOT STREQUAL "SENTRY")
     target_compile_definitions(self_config INTERFACE CURRENT_ROBOT=ROBOT_SENTRY)
 elseif(APP_ROBOT STREQUAL "NAVIGATION")
-    if(NOT APP_BOARD STREQUAL "CHASSIS")
-        message(FATAL_ERROR "NAVIGATION requires APP_BOARD=CHASSIS")
-    endif()
     target_compile_definitions(self_config INTERFACE CURRENT_ROBOT=ROBOT_NAVIGATION)
+elseif(APP_ROBOT STREQUAL "ARMORED")
+    message(STATUS "ARMORED: independent algorithm integration; full vehicle control is not wired")
+    target_compile_definitions(self_config INTERFACE CURRENT_ROBOT=ROBOT_ARMORED)
 else()
-    message(FATAL_ERROR "APP_ROBOT must be SENTRY or NAVIGATION")
+    message(FATAL_ERROR "APP_ROBOT must be SENTRY, NAVIGATION or ARMORED")
 endif()
 
 if(APP_UI STREQUAL "OFF")
@@ -51,8 +53,6 @@ target_include_directories(self_drv_types INTERFACE ${driver_header_dirs} "${CMA
 add_library(self_app_contracts INTERFACE)
 target_include_directories(self_app_contracts INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}/App/Contracts"
-    "${CMAKE_CURRENT_SOURCE_DIR}/App/Modules/can"
-    "${CMAKE_CURRENT_SOURCE_DIR}/App/Modules/control_support"
     "${CMAKE_CURRENT_SOURCE_DIR}/Lib/Lib_math")
 target_link_libraries(self_app_contracts INTERFACE self_config)
 
@@ -64,7 +64,7 @@ target_include_directories(self_os_api INTERFACE
     "${PROJECT_SOURCE_DIR}/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2")
 # CMSIS 声明本身不需要 HAL 或项目板型宏，平台依赖只在实现目标内。
 add_library(self_app_tasks_api INTERFACE)
-# 各任务的接口目录由 App/CMakeLists.txt 的 module_includes 统一填充。
+# 各模块接口目录由 App/CMakeLists.txt 的 app_modules 清单统一填充。
 target_link_libraries(self_app_tasks_api INTERFACE self_app_contracts self_os_api)
 
 add_subdirectory(Lib)
@@ -78,3 +78,6 @@ add_subdirectory(Os)
 get_property(app_objects GLOBAL PROPERTY SELF_OBJECT_TARGETS)
 target_link_libraries(${CMAKE_PROJECT_NAME} self_os ${app_objects} self_drv self_bsp self_lib self_config self_app_tasks_api)
 include("${PROJECT_SOURCE_DIR}/cmake/export_self_manifest.cmake")
+
+# Generated Core code calls the composition entry; functional modules never see Assembly.
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/App/Assembly")

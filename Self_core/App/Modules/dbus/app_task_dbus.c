@@ -8,13 +8,13 @@
 #include "app_tasks.h"
 #include "app_rtos_objects.h"
 #include "app_rtos_config.h"
-#include "app_board_config.h"
+#include "app_vehicle_config.h"
 #include "app_rtos_time.h"
 #include "app_control.h"
 #include "app_task_monitor.h"
 #include <string.h>
 #include "lib_math.h"
-#include "app_devices.h"
+#include "app_task_dbus_io.h"
 
 typedef struct
 {
@@ -61,11 +61,12 @@ bool app_rtos_dbus_read(app_dbus_snapshot_t *v)
 
 /**
  * @brief  发布 DBUS 遥控快照
- * @param  v            输入快照，函数在锁内复制其内容
+ * @param[in] v            输入快照，函数在锁内复制其内容
  * @note   写入者：comm_dbus_Task；使用 dbus_to_gim_mutex，仅允许任务上下文调用。
  * @note   等待取得锁后只复制；参数/句柄无效或获取失败时忽略本次更新。
+ * @return 无返回值；参数/句柄无效或取锁失败时保留旧快照。
  */
-void app_rtos_dbus_write(const app_dbus_snapshot_t *v)
+static void app_rtos_dbus_write(const app_dbus_snapshot_t *v)
 {
     app_rtos_snapshot_write(dbus_to_gim_mutex, &s_dbus, v, sizeof(*v));
 }
@@ -95,6 +96,7 @@ void Start_comm_dbus_Task(void *argument)
             /* 非法帧不覆盖旧摇杆值，但发布 valid=0；有效帧才更新输入和有效数据时间。 */
             snapshot.valid = app_control_dbus_valid(&data);
             snapshot.sequence = frame.sequence;
+            snapshot.seen = 1;
             if (snapshot.valid)
             {
 
@@ -107,7 +109,7 @@ void Start_comm_dbus_Task(void *argument)
                         ((float)data.rc.ch[i] - DRV_DBUS_CHANNEL_CENTER) / DRV_DBUS_CHANNEL_RANGE,
                         -1.0f, 1.0f);
                 }
-                (void)app_gimbal_comm_dbus_rx(&data, &snapshot.input);
+                (void)app_dbus_map_input(&data, &snapshot.input);
             }
             else
             {
@@ -117,7 +119,7 @@ void Start_comm_dbus_Task(void *argument)
             app_rtos_module_update(MODULE_DBUS, snapshot.valid, snapshot.tick);
             app_tasks_profile_end(TASK_DBUS, started);
         }
-        if (!app_devices_dbus_poll())
+        if (!app_task_dbus_port_poll())
         {
             app_rtos_count(COUNT_IO_RESTART_ERROR);
         }

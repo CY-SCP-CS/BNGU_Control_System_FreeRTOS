@@ -4,6 +4,8 @@
  * @note    入口名、周期、业务算法及原通信对象名保持；通信对象句柄仅所属模块可访问。
  */
 #include "app_rtos.h"
+#include "app_task_can.h"
+#include "App/Modules/can/app_core_protocol.h"
 #include "app_task_referee_internal.h"
 #include "app_tasks.h"
 #include "app_rtos_objects.h"
@@ -150,6 +152,66 @@ static uint16_t app_rtos_ref_pop(uint8_t *bytes, uint16_t cap, uint8_t *reset)
  * @note   解析函数返回本次更新掩码和计数，逐段维护字段时间，批末最多发布一份完整快照。
  * @note   接收恢复、心跳及最长 50 ticks 的事件等待保持原职责，不增加裁判限功率或限热量策略。
  */
+static void referee_core_forward(const drv_referee_global_t *data,
+                                 const app_ref_snapshot_t *snapshot, uint32_t now)
+{
+    app_core_referee_t v = {0};
+    app_can_frame_t frame;
+    bool status = (snapshot->valid_mask & REFEREE_FLAG_ROBOT_STATUS) &&
+                  (uint32_t)(now - snapshot->field_tick[6]) <= 1000U;
+    bool heat = (snapshot->valid_mask & REFEREE_FLAG_POWER_HEAT) &&
+                (uint32_t)(now - snapshot->field_tick[7]) <= 1000U;
+    bool hp = (snapshot->valid_mask & REFEREE_FLAG_GAME_ROBOT_HP) &&
+              (uint32_t)(now - snapshot->field_tick[2]) <= 1000U;
+    if (APP_CAN_REF_HEAT_BARREL_MM != 0 && status && heat &&
+        (snapshot->updated_mask & (REFEREE_FLAG_ROBOT_STATUS | REFEREE_FLAG_POWER_HEAT)))
+    {
+        int32_t remaining =
+            (int32_t)data->robot_status.shooter_barrel_heat_limit -
+            (APP_CAN_REF_HEAT_BARREL_MM == 42 ? data->power_heat_data.shooter_42mm_barrel_heat
+                                              : data->power_heat_data.shooter_17mm_barrel_heat);
+        if (remaining > 32767)
+        {
+            remaining = 32767;
+        }
+        if (remaining < -32768)
+        {
+            remaining = -32768;
+        }
+        v.heat_remaining = (int16_t)remaining;
+        v.valid_mask |= 1;
+        v.tick[0] = now;
+        if (app_core_referee_encode(0x151, &v, &frame))
+        {
+            app_rtos_core_can_submit(&frame);
+        }
+    }
+    if (status && hp &&
+        (snapshot->updated_mask & (REFEREE_FLAG_ROBOT_STATUS | REFEREE_FLAG_GAME_ROBOT_HP)))
+    {
+        v.hp = data->robot_status.current_hp;
+        v.max_hp = data->robot_status.maximum_hp;
+        v.ally_1_hp = data->game_robot_hp.ally_1_robot_hp;
+        v.ally_3_hp = data->game_robot_hp.ally_3_robot_hp;
+        v.valid_mask |= 4;
+        v.tick[2] = now;
+        if (app_core_referee_encode(0x155, &v, &frame))
+        {
+            app_rtos_core_can_submit(&frame);
+        }
+    }
+    if (status && (snapshot->updated_mask & REFEREE_FLAG_ROBOT_STATUS))
+    {
+        v.robot_id = data->robot_status.robot_id;
+        v.valid_mask |= 8;
+        v.tick[3] = now;
+        if (app_core_referee_encode(0x157, &v, &frame))
+        {
+            app_rtos_core_can_submit(&frame);
+        }
+    }
+}
+
 void Start_comm_ref_Task(void *argument)
 {
     (void)argument;
@@ -215,6 +277,7 @@ void Start_comm_ref_Task(void *argument)
             snapshot.sequence += batch.frames;
             snapshot.valid = 1;
             app_rtos_ref_write(&snapshot);
+            referee_core_forward(data, &snapshot, osKernelGetTickCount());
             app_rtos_module_update(MODULE_REFEREE, snapshot.valid, snapshot.tick);
         }
         if (batch.errors)

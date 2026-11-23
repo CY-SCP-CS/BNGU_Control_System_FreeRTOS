@@ -38,8 +38,6 @@ static void gimbal_drain(uint8_t *radar_pending)
 {
     app_can_ctrl_msg_t m;
     s_gim_input.updated_mask = 0;
-    memset(&s_gim_input.can.speed_no_shoot, 0, sizeof(s_gim_input.can.speed_no_shoot));
-    memset(&s_gim_input.can.speed_shoot, 0, sizeof(s_gim_input.can.speed_shoot));
     for (unsigned i = 0; i < APP_RTOS_CTRL_INPUT_BUDGET && app_rtos_can_ctrl_receive(&m); i++)
     {
         if (!app_data_fresh(true, m.tick, osKernelGetTickCount(), APP_INPUT_CAN_MAX_AGE_MS))

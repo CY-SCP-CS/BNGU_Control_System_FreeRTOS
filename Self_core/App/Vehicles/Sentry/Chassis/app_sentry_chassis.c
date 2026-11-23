@@ -8,7 +8,6 @@
 #include "App/Vehicles/Sentry/Config/app_sentry_common.h"
 #include "App/Vehicles/Sentry/Contracts/app_motor_role.h"
 #include "app_sentry_chassis.h"
-#include "app_chassis_legacy.h"
 #include "legacy_control_types.h"
 #include "legacy_motor_limits.h"
 
@@ -411,9 +410,11 @@ static void power_publish(void)
  * @note   由 ctrl_chas_Task 周期调用，步长来自 APP_CONTROL_CHAS_DT_S，不调用 HAL 或 RTOS。
  * @note   板间反馈分频由任务层维护；输入过期由 SI 适配入口转换为急停并复位 PID。
  */
-void legacy_app_sentry_chassis_ctrl(const legacy_chassis_input_t *input,
+static void legacy_app_sentry_chassis_ctrl(const legacy_chassis_input_t *input,
                                     legacy_chassis_output_t *output)
 {
+    s_power_state.tar_power =
+        SENTRY_CHASSIS_TAR_POWER * lib_clamp(input->can.speed.power_pct * .0001f, 0, 1);
     chassis_compute(input);
     memcpy(output->current, s_motor_state.current, sizeof(output->current));
     output->state = s_chassis_state;
@@ -456,7 +457,6 @@ static void chassis_ramp_update(float dt)
  *        by the sole control task; this API is single-instance and non-reentrant.
  */
 #include "app_sentry_chassis.h"
-#include "app_chassis_legacy.h"
 #include "App/Vehicles/Sentry/Config/app_sentry_common.h"
 #include "legacy_adapter.h"
 #include "app_data_age.h"
@@ -471,13 +471,20 @@ void app_sentry_chassis_ctrl(const app_chassis_input_t *input, app_chassis_outpu
         lib_quantize_i16(input->can.speed.vx, .001f), lib_quantize_i16(input->can.speed.vy, .001f),
         lib_quantize_i16(input->can.speed.vz, .001f),
         lib_quantize_i16(input->can.speed.power_pct, .0001f)};
+    if (v->can.speed.vx == SENTRY_CHASSIS_ESTOP)
+    {
+        v->can.speed.vx = SENTRY_CHASSIS_ESTOP + 1;
+    }
     v->can.ackermann = (legacy_chassis_ackermann_cmd_t){lib_m_to_mm(input->can.ackermann.speed),
                                                         input->can.ackermann.steer_angle};
-    v->can.follow = (legacy_chassis_follow_cmd_t){
-        lib_quantize_i16(input->can.follow.vx, .001f),
-        lib_quantize_i16(input->can.follow.vy, .001f),
-        lib_quantize_i16(input->can.follow.gimbal_angle, .001f), input->can.follow.custom};
-    if (!app_data_fresh(input->command_valid, input->command_tick, input->tick,
+    v->can.follow =
+        (legacy_chassis_follow_cmd_t){lib_quantize_i16(input->can.follow.vx, .001f),
+                                      lib_quantize_i16(input->can.follow.vy, .001f),
+                                      lib_quantize_i16(input->can.follow.gimbal_angle, .001f),
+                                      lib_quantize_i16(input->can.follow.wz, .001f)};
+    if (!isfinite(input->can.speed.power_pct) || input->can.speed.power_pct <= 0 ||
+        input->can.speed.power_pct > 1 ||
+        !app_data_fresh(input->command_valid, input->command_tick, input->tick,
                         APP_INPUT_CAN_MAX_AGE_MS) ||
         !app_motor_feedback_fresh(&input->feedback, 0, 4, input->tick) ||
         !app_data_fresh(input->feedback.power_valid, input->feedback.power_tick, input->tick,

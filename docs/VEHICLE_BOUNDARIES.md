@@ -64,7 +64,7 @@ tests/architecture/test_vehicle_builds.py 检查编译清单未串用车型控�
 车型控制、输入时效与能力参数仍在各车型 Config。CAN/DBUS/IMU/裁判资源容量及批处理预算放在各自 app_task_*.h；健康数据源清单归 Modules/health。
 
 原 app_can_frame.h 与 app_can_data.h 已真正合为 Modules/can/app_can_data.h，统一声明原始帧、接收指令及发送消息。
-该文件属于当前 CAN 服务的数据接口；哨兵云台命令定义引用 Vehicles/Sentry/Contracts，不再放在公共 Contracts 中冒充通用业务模型。
+该文件属于当前 CAN 服务的数据接口；公共命令定义引用 Modules/can/app_can_commands.h；车型控制模型引用 Vehicles/Sentry/Contracts，不再放在公共 Contracts 中冒充通用业务模型。
 哨兵云台、发射、电机角色定义归 Sentry/Contracts；导航输入归 Navigation/Contracts；遥测汇总归 Modules/telemetry/app_ctrl_data.h。
 公共 Contracts 保留运动指令、底盘遥测、反馈、遥控、IMU、裁判数据和时效工具。底盘速度、轮状态与遥测类型使用中性名称；遥控输入类型也不再以 gimbal 命名。
 当前 CAN 服务仍承载已有哨兵协议和导航兼容速度指令，不能据此认为重装协议已实现。
@@ -78,3 +78,13 @@ tests/architecture/test_vehicle_builds.py 检查编译清单未串用车型控�
 三个哨兵 *_adapter.c 已并入各自算法文件，保留原 SI 转换、时效门控和计算顺序；公共入口集中在文件后部。
 重装 app_armored_io.c 的输出绑定并入 app_Armored_joint.c。
 任务、纯算法和涉及 DMA/HAL 的端口仍分开，避免把中断接收、硬件恢复与控制计算混为一个文件。
+
+新版核心总线适配及未定项见 [CORE_CAN_ADAPTATION.md](CORE_CAN_ADAPTATION.md)。
+
+## 函数可见性收口（2026-11-23，仅哨兵与公共框架）
+
+跨模块服务在公共头声明；模块内部跨 .c 接口在私有头声明；仅本 .c 使用的函数在实现中定义为 static，不在头文件暴露。
+三个哨兵 legacy_app_sentry_* 控制入口在 adapter 合并后已经只由本文件调用，现改为 static，并移除 app_chassis_legacy.h、app_gimbal_legacy.h、app_shoot_legacy.h。
+保留公共初始化与 SI 控制入口。任务入口、跨文件 ISR 接口、宏展开调用的 UI 发送接口和明确预留的公共服务 API 不按单纯的文本调用次数改成 static。
+本次没有修改重装与导航车型实现或接口。
+通过 ARM 目标文件 nm 符号表核验：三个旧入口为本地 t，三个公共控制入口仍为全局 T。

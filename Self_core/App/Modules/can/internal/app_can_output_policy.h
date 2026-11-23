@@ -19,7 +19,7 @@ static inline bool app_can_frame_prepare(app_can_frame_t *f, uint32_t now)
     else if (f->bus == 1 && f->std_id == 0x111)
     {
         memset(f->data, 0, 8);
-        f->data[1] = 0x80;
+        /* Explicit local timeout action: command zero velocity, no wire stop sentinel. */
     }
     else
     {

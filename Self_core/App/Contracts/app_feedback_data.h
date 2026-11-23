@@ -5,6 +5,7 @@
 #ifndef APP_FEEDBACK_DATA_H
 #define APP_FEEDBACK_DATA_H
 #include <stdint.h>
+#include "App/Modules/can/app_core_protocol.h"
 #include "App/Vehicles/Sentry/Contracts/app_motor_role.h"
 
 /** @brief 已验证的电机物理反馈；CAN 任务写，互斥快照读，机构方向由算法解释。 */
@@ -37,9 +38,14 @@ typedef struct
     uint8_t motor_valid[GIMBAL_MOTOR_COUNT];        // 各电机是否已收到有效反馈。
     app_power_feedback_t power; // 底盘 CAN2 0x212 功率计反馈，含协议电压/电流及 W 功率。
     uint32_t power_tick,        // 最近有效功率计反馈的接收时间戳。
-        omega_tick;             // 云台收到的最近有效 CAN1 0x119 时间戳。
+        omega_tick;             // 云台收到的最近有效 CAN1 0x112 时间戳。
     float omega;                // 底盘对地角速度反馈，单位 rad/s。
     uint8_t power_valid,        // 是否已收到有效功率计反馈。
         omega_valid;            // 是否已收到有效底盘角速度反馈。
+    app_core_referee_t core_referee;
+    app_core_euler_t dm_euler;
+    float core_quaternion[4];
+    uint32_t dm_tick, quaternion_tick;
+    uint8_t dm_valid, quaternion_valid;
 } app_can_feedback_t;
 #endif

@@ -1007,6 +1007,11 @@
               <FilePath>../Self_core/App/Modules/can/app_vehicle_can.c</FilePath>
             </File>
             <File>
+              <FileName>app_core_protocol.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Self_core/App/Modules/can/app_core_protocol.c</FilePath>
+            </File>
+            <File>
               <FileName>app_task_can.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Self_core/App/Modules/can/app_task_can.c</FilePath>

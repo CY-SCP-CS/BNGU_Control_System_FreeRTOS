@@ -154,17 +154,11 @@ static void test_wire(void)
     m.value.gimbal.pitch = LIB_RAD_PER_DEG * -30;
     m.value.gimbal.quat.q0 = 1;
 #if CURRENT_ROBOT == ROBOT_SENTRY && CURRENT_BOARD == BOARD_GIMBAL
-    assert(app_vehicle_can_encode(&m, f) == 4);
-    assert(f[0].std_id == 0x122 && f[1].std_id == 0x124 && f[2].std_id == 0x233 &&
-           f[3].std_id == 0x139);
-    float x, y;
-    memcpy(&x, f[3].data, 4);
-    memcpy(&y, f[3].data + 4, 4);
-    near(x, 90, .0001f);
-    near(y, -30, .0001f);
-    assert(f[3].bus == 1);
-    memcpy(&x, f[1].data, 4);
-    near(x, LIB_RAD_PER_DEG * 90, .0001f);
+    assert(app_vehicle_can_encode(&m, f) == 3);
+    assert(f[0].std_id == 0x122 && f[0].dlc == 4 && f[1].std_id == 0x124 && f[1].dlc == 4 &&
+           f[2].std_id == 0x233);
+    int16_t yaw_raw = (int16_t)((uint16_t)f[1].data[0] | ((uint16_t)f[1].data[1] << 8));
+    near(yaw_raw * .0001f, LIB_RAD_PER_DEG * 90, .000051f);
 #else
     assert(app_vehicle_can_encode(&m, f) == 0);
 #endif
@@ -248,6 +242,7 @@ static void test_navigation(void)
     dbus.switch_s1 = 2;
     recent(&in.chassis.feedback, 121);
     in.chassis.can.speed.vx = .7f;
+    in.chassis.can.speed.power_pct=1;
     navigation_ctrl_step(&in, &dbus, &imu, 121, &out);
     near(out.target.vx_speed, .7f, 1e-6f);
     dbus.valid = 0;
@@ -278,6 +273,7 @@ static void test_freshness(void)
     app_sentry_launcher_ctrl_200hz(&s, &so);
     assert(so.current[0] == 0 && so.current[1] == 0 && so.current[2] == 0);
     app_chassis_input_t c = {0};
+    c.can.speed.power_pct=1;
     app_chassis_output_t co;
     c.tick = 200;
     c.command_tick = 100;
@@ -370,7 +366,7 @@ static void test_migrated_control(void)
     gimbal_refresh(&g, 123);
     g.updated_mask = APP_GIMBAL_COMM_UPDATE_SHOOT;
     g.can_tick[5] = 123;
-    g.can.shoot.shoot_switch = 255;
+    g.can.shoot.friction_switch = 255;
     app_sentry_gimbal_ctrl_1khz(&g, &o);
     assert(o.shoot.fire == APP_SENTRY_FIRE_ON);
     g.imu.device_valid = 0;
@@ -403,7 +399,7 @@ static void test_migrated_control(void)
     g.can_valid_mask |= APP_GIMBAL_COMM_UPDATE_SHOOT;
     g.updated_mask = APP_GIMBAL_COMM_UPDATE_SHOOT;
     g.can_tick[5] = 149;
-    g.can.shoot.shoot_switch = 0;
+    g.can.shoot.friction_switch = 0;
     app_sentry_gimbal_ctrl_1khz(&g, &o);
     assert(o.shoot.fire == APP_SENTRY_FIRE_OFF);
     gimbal_refresh(&g, 150);
@@ -416,6 +412,7 @@ static void test_migrated_control(void)
     app_sentry_gimbal_ctrl_1khz(&g, &o);
     assert(!o.shoot.ready);
     app_chassis_input_t c = {0};
+    c.can.speed.power_pct=1;
     app_chassis_output_t co;
     c.tick = c.command_tick = 100;
     c.command_valid = 1;
@@ -438,7 +435,7 @@ static void test_migrated_control(void)
     assert(app_can_frame_prepare(&f, 121) && f.data[0] == 0);
     f.bus = 1;
     f.std_id = 0x111;
-    assert(app_can_frame_prepare(&f, 201) && f.data[1] == 128);
+    assert(app_can_frame_prepare(&f, 201) && f.data[1] == 0);
     f.std_id = 0x124;
     assert(!app_can_frame_prepare(&f, 121));
     drv_game_controller_buttons_t pad = {0};
@@ -450,12 +447,12 @@ static void test_migrated_control(void)
     app_can_ctrl_msg_t delta = {.type = APP_CAN_CMD_SPEED_NO_SHOOT,
                                 .updated_mask = APP_GIMBAL_COMM_UPDATE_SPEED_NO_SHOOT,
                                 .tick = 100};
-    delta.value.delta.yaw_inc = .1f;
+    delta.value.angular_velocity.yaw_rate = .1f;
     uint8_t radar = 0;
     app_gimbal_input_t merged = {0};
     app_gimbal_command_merge(&merged, &delta, &radar);
     app_gimbal_command_merge(&merged, &delta, &radar);
-    near(merged.can.speed_no_shoot.yaw_inc, .2f, 1e-6f);
+    near(merged.can.speed_no_shoot.yaw_rate, .1f, 1e-6f);
     app_dbus_snapshot_t radio = {0};
     app_imu_snapshot_t nav_imu = {0};
     radio.valid = 1;
@@ -496,8 +493,60 @@ static void test_migrated_control(void)
     assert(!drv_referee_build_frame(buf, sizeof(buf), CMD_ROBOT_INTERACTION, payload, 8, 0));
 }
 
+static void test_velocity_hold(void)
+{
+    app_gimbal_input_t g = {0};
+    app_gimbal_output_t out = {0};
+    g.imu.valid = g.imu.sampled = g.imu.device_valid = g.imu.filter_ready = 1;
+    g.dbus.valid = g.dbus.seen = 1;
+    g.feedback.motor[0].angle_rad = SENTRY_GIMBAL_L_YAW_ZERO * LIB_RAD_PER_ENC13;
+    g.feedback.motor[1].angle_rad = SENTRY_GIMBAL_S_YAW_ZERO * LIB_RAD_PER_ENC13;
+    g.feedback.motor[2].angle_rad = SENTRY_GIMBAL_PITCH_ZERO * LIB_RAD_PER_ENC13;
+    g.dbus.input.source = APP_REMOTE_INPUT_CAN;
+    app_sentry_gimbal_init();
+    for (unsigned t = 100; t <= 120; t++)
+    {
+        gimbal_refresh(&g, t);
+        app_sentry_gimbal_ctrl_1khz(&g, &out);
+    }
+    gimbal_refresh(&g, 121);
+    g.can.speed_no_shoot.yaw_rate = 1;
+    g.can_valid_mask = g.updated_mask = APP_GIMBAL_COMM_UPDATE_SPEED_NO_SHOOT;
+    g.can_tick[1] = 121;
+    app_sentry_gimbal_ctrl_1khz(&g, &out);
+    float start = out.yaw_target;
+    g.updated_mask = 0;
+    for (unsigned t = 122; t <= 141; t++)
+    {
+        gimbal_refresh(&g, t);
+        app_sentry_gimbal_ctrl_1khz(&g, &out);
+    }
+    near(out.yaw_target - start, .020f, .00001f);
+    float previous = out.yaw_target;
+    gimbal_refresh(&g, 143);
+    app_sentry_gimbal_ctrl_1khz(&g, &out);
+    near(out.yaw_target - previous, .002f, .00001f);
+    previous = out.yaw_target;
+    gimbal_refresh(&g, 222);
+    app_sentry_gimbal_ctrl_1khz(&g, &out);
+    near(out.yaw_target, previous, .00001f);
+}
+static void test_protocol_power_and_minimum_velocity(void) {
+    app_chassis_input_t in={0};app_chassis_output_t out={0};
+    app_sentry_chassis_init();in.tick=in.command_tick=100;in.command_valid=1;
+    recent(&in.feedback,100);in.feedback.power.power_w=20;
+    in.can.speed=(app_chassis_speed_cmd_t){.vx=-32.768f,.power_pct=1};
+    app_sentry_chassis_ctrl(&in,&out);assert(out.target.vx_speed<0);
+    in.can.speed.power_pct=0;app_sentry_chassis_ctrl(&in,&out);
+    assert(out.target.vx_speed==0);
+    for(unsigned i=0;i<4;i++)assert(out.current[i]==0);
+    in.can.speed.power_pct=.5f;in.can.speed.vx=.1f;
+    app_sentry_chassis_ctrl(&in,&out);near(out.state.tar_power,50,.0001f);
+}
 int main(void)
 {
+    test_protocol_power_and_minimum_velocity();
+    test_velocity_hold();
     test_migrated_control();
     test_input();
     test_gimbal();

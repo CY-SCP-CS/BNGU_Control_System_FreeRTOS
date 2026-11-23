@@ -6,10 +6,17 @@
 #define APP_VEHICLE_CAN_H
 #include "App/Modules/can/app_can_data.h"
 #include "app_feedback_data.h"
+#ifndef APP_CAN_DM_IMU_BUS
+#define APP_CAN_DM_IMU_BUS 0
+#endif
+#if APP_CAN_DM_IMU_BUS < 0 || APP_CAN_DM_IMU_BUS > 2
+#error "APP_CAN_DM_IMU_BUS must be 0 (disabled), 1 or 2"
+#endif
 
 typedef enum
 {
     APP_VEHICLE_CAN_IGNORED,
+    APP_VEHICLE_CAN_AUX,
     APP_VEHICLE_CAN_INVALID,
     APP_VEHICLE_CAN_MOTOR,
     APP_VEHICLE_CAN_POWER,

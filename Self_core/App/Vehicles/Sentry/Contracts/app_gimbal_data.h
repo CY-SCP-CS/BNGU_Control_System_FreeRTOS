@@ -4,13 +4,13 @@
  */
 #ifndef APP_GIMBAL_DATA_H
 #define APP_GIMBAL_DATA_H
-#include "App/Vehicles/Sentry/Contracts/app_command_data.h"
+#include "App/Modules/can/app_can_commands.h"
 #include <stdint.h>
 #include "app_dbus_data.h"
 #include "app_imu_data.h"
 #include "app_feedback_data.h"
 #include "App/Vehicles/Sentry/Contracts/app_shoot_data.h"
-#include "App/Vehicles/Sentry/Contracts/app_command_data.h"
+#include "App/Modules/can/app_can_commands.h"
 
 /**
  * @brief  云台单次控制计算使用的完整输入

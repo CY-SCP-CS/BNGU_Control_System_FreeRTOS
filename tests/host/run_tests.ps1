@@ -10,7 +10,7 @@ try {
     & python (Join-Path $projectRoot 'tests/architecture/test_dependencies.py')
     if ($LASTEXITCODE -ne 0) { throw 'Architecture regression failed' }
     & (Join-Path $PSScriptRoot 'run_contracts.ps1') -Compiler $compilerPath
-    foreach ($suite in @('startup', 'vehicles', 'port', 'mag', 'imu', 'telemetry')) {
+    foreach ($suite in @('startup', 'vehicles', 'protocol', 'port', 'mag', 'imu', 'telemetry')) {
         $runner = Join-Path $projectRoot "tests/$suite/run_tests.py"
         if ($suite -in @('port', 'telemetry')) {
             & python $runner --cc $compilerPath

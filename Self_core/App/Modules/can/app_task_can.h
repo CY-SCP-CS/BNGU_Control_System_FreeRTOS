@@ -37,4 +37,6 @@ bool app_rtos_feedback_read(app_can_feedback_t *value);
 #define APP_RTOS_CAN_PENDING_DEPTH 16U
 #define APP_RTOS_CAN_TX_BUDGET 16U
 #define APP_RTOS_CTRL_INPUT_BUDGET 16U
+/** Submit only defined core auxiliary frames; per-ID latest slots prevent cross-ID overwrites. */
+bool app_rtos_core_can_submit(const app_can_frame_t *frame);
 #endif

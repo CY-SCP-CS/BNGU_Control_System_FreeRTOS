@@ -16,4 +16,11 @@ bool app_rtos_ref_read(app_ref_snapshot_t *value);
 #define APP_RTOS_REF_FIFO_SIZE 1024U
 #define APP_RTOS_REF_CHUNK_SIZE 128U
 #define APP_RTOS_REF_BATCH_CHUNKS 8U
+#ifndef APP_CAN_REF_HEAT_BARREL_MM
+#define APP_CAN_REF_HEAT_BARREL_MM 0U /* Select 17 or 42 after the source is confirmed. */
+#endif
+#if APP_CAN_REF_HEAT_BARREL_MM != 0 && APP_CAN_REF_HEAT_BARREL_MM != 17 &&                         \
+    APP_CAN_REF_HEAT_BARREL_MM != 42
+#error "APP_CAN_REF_HEAT_BARREL_MM must be 0, 17 or 42"
+#endif
 #endif

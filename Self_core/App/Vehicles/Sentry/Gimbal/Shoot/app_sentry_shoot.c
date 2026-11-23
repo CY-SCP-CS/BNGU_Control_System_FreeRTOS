@@ -6,7 +6,6 @@
 #include "App/Vehicles/Sentry/Config/sentry_control_config.h"
 #include "App/Vehicles/Sentry/Contracts/app_motor_role.h"
 #include "app_sentry_shoot.h"
-#include "app_shoot_legacy.h"
 #include "legacy_control_types.h"
 #include "legacy_motor_limits.h"
 #include "App/Vehicles/Sentry/Config/app_sentry_common.h"
@@ -144,7 +143,7 @@ void app_sentry_shoot_init(void)
  * @note   ready 未置位或 emergency_stop 有效时清零电流并复位 PID；其他情况按 fire 模式控制。
  * @note   本函数不再直接读取 DBUS，也不发送 CAN；模式已由云台控制任务统一裁决。
  */
-void legacy_app_sentry_launcher_ctrl_200hz(const legacy_shoot_input_t *input,
+static void legacy_app_sentry_launcher_ctrl_200hz(const legacy_shoot_input_t *input,
                                            legacy_shoot_output_t *output)
 {
     memcpy(s_motor_state.feedback, input->feedback.motor, sizeof(s_motor_state.feedback));
@@ -175,7 +174,6 @@ void legacy_app_sentry_launcher_ctrl_200hz(const legacy_shoot_input_t *input,
  *        by the sole control task; this API is single-instance and non-reentrant.
  */
 #include "app_sentry_shoot.h"
-#include "app_shoot_legacy.h"
 #include "App/Vehicles/Sentry/Config/app_sentry_common.h"
 #include "legacy_adapter.h"
 #include "app_data_age.h"

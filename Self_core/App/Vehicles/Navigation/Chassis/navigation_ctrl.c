@@ -92,7 +92,8 @@ void navigation_ctrl_step(const app_navigation_input_t *input, const app_dbus_sn
             (void)chassis_stop();
         }
     }
-    else if (dbus->switch_s1 == 2U &&
+    else if (dbus->switch_s1 == 2U && input->chassis.can.speed.power_pct > 0 &&
+             input->chassis.can.speed.power_pct <= 1 &&
              app_data_fresh(input->chassis.command_valid, input->chassis.command_tick, now_tick,
                             APP_INPUT_CAN_MAX_AGE_MS))
     {

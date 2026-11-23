@@ -25,7 +25,7 @@ static struct
 {
     app_ctrl_can_msg_t message;
     uint8_t valid, dirty, expired;
-} s_latest[7];
+} s_latest[APP_CAN_OUTPUT_COUNT];
 
 static osMutexId_t can_feedback_mutex;
 static app_can_feedback_t s_feedback;
@@ -65,7 +65,7 @@ void app_rtos_can_event_isr(app_rtos_can_event_t event)
 
 void app_rtos_ctrl_send(const app_ctrl_can_msg_t *message)
 {
-    if (!message || (unsigned)message->type >= 7U)
+    if (!message || (unsigned)message->type >= APP_CAN_OUTPUT_COUNT)
     {
         return;
     }
@@ -111,6 +111,76 @@ static void app_rtos_feedback_write(const app_can_feedback_t *v)
 }
 
 /* 以下 CAN 解码、编码、邮箱提交和待发槽全部由同一个 CAN 任务独占。 */
+bool app_rtos_core_can_submit(const app_can_frame_t *f)
+{
+    if (!f)
+    {
+        return false;
+    }
+    app_ctrl_can_msg_t m = {.tick = f->tick};
+    switch (f->std_id)
+    {
+        case 0x151:
+            if (f->bus != 1 || f->dlc != 2)
+            {
+                return false;
+            }
+            m.type = APP_CAN_REF_HEAT;
+            break;
+        case 0x153:
+            if (f->bus != 1 || f->dlc != 8)
+            {
+                return false;
+            }
+            m.type = APP_CAN_REF_FIELD;
+            break;
+        case 0x155:
+            if (f->bus != 1 || f->dlc != 8)
+            {
+                return false;
+            }
+            m.type = APP_CAN_REF_ROBOT;
+            break;
+        case 0x157:
+            if (f->bus != 1 || f->dlc != 1)
+            {
+                return false;
+            }
+            m.type = APP_CAN_REF_ID;
+            break;
+        case 0x031:
+            if ((f->bus != 1 && f->bus != 2) || f->dlc != 4 || f->data[0] != 0xCC ||
+                f->data[1] < 1 || f->data[1] > 4 || f->data[2] != 0 || f->data[3] != 0xDD)
+            {
+                return false;
+            }
+            m.type = APP_CAN_IMU_REQUEST;
+            break;
+        default:
+            return false;
+    }
+    if (m.type != APP_CAN_IMU_REQUEST)
+    {
+        app_core_referee_t state = {0};
+        if (!app_core_referee_decode(f, &state))
+        {
+            return false;
+        }
+    }
+    m.source = m.type == APP_CAN_IMU_REQUEST ? TASK_IMU : TASK_REF;
+    m.sequence = f->sequence;
+    m.source = m.type == APP_CAN_IMU_REQUEST ? TASK_IMU : TASK_REF;
+    m.sequence = f->sequence;
+    m.source = m.type == APP_CAN_IMU_REQUEST ? TASK_IMU : TASK_REF;
+    m.sequence = f->sequence;
+    m.value.core.id = f->std_id;
+    m.value.core.bus = f->bus;
+    m.value.core.dlc = f->dlc;
+    memcpy(m.value.core.data, f->data, f->dlc);
+    app_rtos_ctrl_send(&m);
+    return true;
+}
+
 static app_can_feedback_t s_can_feedback; // CAN 任务私有反馈工作副本，各电机拥有独立更新时间
 
 /** @brief 调用纯协议解析器，再把更新发布给健康监测或唯一控制消费者。 */
@@ -142,6 +212,8 @@ static void can_decode(const app_can_frame_t *frame)
             break;
         case APP_VEHICLE_CAN_INVALID:
             app_rtos_count(COUNT_CAN_INVALID);
+            break;
+        case APP_VEHICLE_CAN_AUX:
             break;
         case APP_VEHICLE_CAN_IGNORED:
             break;
@@ -269,7 +341,7 @@ void Start_comm_can_Task(void *argument)
         }
         /* 一次处理批次结束后发布完整反馈，控制任务只读快照，不直接读私有解码状态。 */
         app_rtos_feedback_write(&s_can_feedback);
-        for (unsigned i = 0; i < 7; ++i)
+        for (unsigned i = 0; i < APP_CAN_OUTPUT_COUNT; ++i)
         {
             app_ctrl_can_msg_t message;
             bool send = false;
@@ -282,7 +354,7 @@ void Start_comm_can_Task(void *argument)
                 memset(&s_latest[i].message.value, 0, sizeof(s_latest[i].message.value));
                 if (i == APP_CAN_CHASSIS_CMD)
                 {
-                    s_latest[i].message.value.chassis.vx = -32.768f;
+                    s_latest[i].message.value.chassis.vx = 0.0f;
                 }
                 s_latest[i].message.tick = osKernelGetTickCount();
                 s_latest[i].dirty = 1;

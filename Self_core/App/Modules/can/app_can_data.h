@@ -21,7 +21,7 @@ typedef struct
         sequence;    // 接收帧序号，或对应控制结果的输出序号。
 } app_can_frame_t;
 
-#include "App/Vehicles/Sentry/Contracts/app_command_data.h"
+#include "App/Modules/can/app_can_commands.h"
 #include "lib_physical.h"
 
 /** @brief 控制指令的语义类别；控制任务不需要了解线上 ID。 */
@@ -52,14 +52,14 @@ typedef struct
 
     union
     {
-        app_gimbal_radar_cmd_t radar;          // 0x120：雷达/上位机底盘速度指令。
-        app_gimbal_speed_cmd_t delta;          // 0x121/125：云台角度增量，单位 rad。
-        app_gimbal_angle_cmd_t angle;          // 0x123/127：云台绝对角度，单位 rad。
-        app_gimbal_shoot_cmd_t shoot;          // 0x129：发射模式控制字。
-        app_chassis_speed_cmd_t speed;         // 0x111：底盘速度指令，SI 单位。
-        app_chassis_ackermann_cmd_t ackermann; // 0x113：阿克曼模式参数。
-        app_chassis_follow_cmd_t follow;       // 0x115：底盘跟随模式参数。
-    } value;                                   // 仅按 type 读取对应成员。
+        app_gimbal_radar_cmd_t radar;            // 0x120：雷达/上位机底盘速度指令。
+        app_gimbal_speed_cmd_t angular_velocity; // 0x121/125：云台目标角速度，单位 rad/s。
+        app_gimbal_angle_cmd_t angle;            // 0x123/127：云台绝对角度，单位 rad。
+        app_gimbal_shoot_cmd_t shoot;            // 0x129：发射模式控制字。
+        app_chassis_speed_cmd_t speed;           // 0x111：底盘速度指令，SI 单位。
+        app_chassis_ackermann_cmd_t ackermann;   // 0x113：阿克曼模式参数。
+        app_chassis_follow_cmd_t follow;         // 0x115：底盘跟随模式参数。
+    } value;                                     // 仅按 type 读取对应成员。
 } app_can_ctrl_msg_t;
 
 /**
@@ -73,8 +73,14 @@ typedef enum
     APP_CAN_CHAS_CURRENT,  // 底盘四电机电流，拆为 CAN2 ID 0x200 和 0x1FF。
     APP_CAN_CHASSIS_CMD,   // 云台下发或转发底盘速度，CAN1 ID 0x111。
     APP_CAN_GIM_FEEDBACK,  // 云台角速度、角度和四元数，CAN1 ID 0x122/124/233。
-    APP_CAN_CHAS_FEEDBACK, // 底盘功率和角速度，CAN1 ID 0x112/119。
-    APP_CAN_TEST           // Optional CAN1 0x300 sequence and microsecond timestamp.
+    APP_CAN_CHAS_FEEDBACK, // 底盘功率和角速度，CAN1 ID 0x112。
+    APP_CAN_TEST,          // Optional CAN1 0x300 sequence and microsecond timestamp.
+    APP_CAN_REF_HEAT,
+    APP_CAN_REF_FIELD,
+    APP_CAN_REF_ROBOT,
+    APP_CAN_REF_ID,
+    APP_CAN_IMU_REQUEST,
+    APP_CAN_OUTPUT_COUNT
 } app_ctrl_can_type_t;
 
 /**
@@ -91,6 +97,12 @@ typedef struct
 
     union
     {
+        struct
+        {
+            uint32_t id;
+            uint8_t bus, dlc, data[8];
+        } core;
+
         uint32_t test_timestamp_us;      // APP_CAN_TEST: local submission time, wraps uint32.
         int16_t current[4];              // 机构电流，排列顺序与对应控制输出结构体的 current 一致。
         app_chassis_speed_cmd_t chassis; // 0x111 底盘指令，vx/vy 为 m/s，vz 为 rad/s。

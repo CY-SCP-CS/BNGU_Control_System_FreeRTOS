@@ -63,6 +63,6 @@ typedef struct
     int16_t current[4];            // 右驱动、左驱动、左舵向、右舵向电流；DJI 协议原始值。
     app_chassis_state_t state;     // 当前运动状态、实测功率和功率缩放结果。
     app_chassis_velocity_t target; // 限幅后的目标速度；x/y 为 m/s，w 为 rad/s。
-    float omega;                   // 用于 0x119 反馈的滤波车体角速度，单位 rad/s。
+    float omega;                   // 用于 0x112 反馈的滤波车体角速度，单位 rad/s。
 } app_chassis_output_t;
 #endif

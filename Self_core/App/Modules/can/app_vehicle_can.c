@@ -3,6 +3,7 @@
  * @brief   按独立车型选择 CAN 映射；公共编解码与协议细节集中于此
  */
 #include "app_vehicle_can.h"
+#include "app_core_protocol.h"
 #include "app_chassis_comm.h"
 #include "app_gimbal_comm.h"
 #include "App/Vehicles/Sentry/Config/app_sentry_common.h"
@@ -18,6 +19,39 @@ app_vehicle_can_result_t app_vehicle_can_decode(const app_can_frame_t *frame,
                                                 app_can_feedback_t *feedback,
                                                 app_can_ctrl_msg_t *command, unsigned *motor_index)
 {
+    if (!frame || !feedback || !command || !motor_index)
+    {
+        return APP_VEHICLE_CAN_INVALID;
+    }
+    if (frame->bus == 1 && (frame->std_id == 0x151 || frame->std_id == 0x153 ||
+                            frame->std_id == 0x155 || frame->std_id == 0x157))
+    {
+        return app_core_referee_decode(frame, &feedback->core_referee) ? APP_VEHICLE_CAN_AUX
+                                                                       : APP_VEHICLE_CAN_INVALID;
+    }
+    if (frame->bus == 1 && frame->std_id == 0x233)
+    {
+        if (!app_core_quaternion_decode(frame, feedback->core_quaternion))
+        {
+            return APP_VEHICLE_CAN_INVALID;
+        }
+        feedback->quaternion_tick = frame->tick;
+        feedback->quaternion_valid = 1;
+        return APP_VEHICLE_CAN_AUX;
+    }
+#if APP_CAN_DM_IMU_BUS != 0
+    if (frame->bus == APP_CAN_DM_IMU_BUS && frame->std_id == 0x039)
+    {
+        if (!app_core_imu_euler_decode(frame, &feedback->dm_euler))
+        {
+            return APP_VEHICLE_CAN_INVALID;
+        }
+        feedback->dm_tick = frame->tick;
+        feedback->dm_valid = 1;
+        return APP_VEHICLE_CAN_AUX;
+    }
+#endif
+
 #if CURRENT_ROBOT == ROBOT_ARMORED ||                                                              \
     (CURRENT_ROBOT == ROBOT_NAVIGATION && CURRENT_BOARD == BOARD_GIMBAL)
     (void)frame;
@@ -106,20 +140,27 @@ app_vehicle_can_result_t app_vehicle_can_decode(const app_can_frame_t *frame,
         }
         return APP_VEHICLE_CAN_IGNORED;
     }
+    if (frame->bus != 1)
+    {
+        return APP_VEHICLE_CAN_IGNORED;
+    }
     *command = (app_can_ctrl_msg_t){.tick = frame->tick, .sequence = frame->sequence};
 #if APP_BOARD_HAS_GIMBAL
-    if (frame->std_id == 0x119)
+    if (frame->std_id == 0x112)
     {
         float omega;
-        if (frame->dlc < 4)
+        if (frame->dlc != 4)
         {
             return APP_VEHICLE_CAN_INVALID;
         }
-        memcpy(&omega, frame->data, 4);
-        if (!isfinite(omega) || fabsf(omega) > SENTRY_CHASSIS_VW_TAR_SPEED_MAX * 1.5f)
+        omega = wire_i16(frame->data + 2) * .001f;
+        if (!isfinite(omega))
         {
             return APP_VEHICLE_CAN_INVALID;
         }
+        feedback->power.power_w = wire_i16(frame->data) * .01f;
+        feedback->power_tick = frame->tick;
+        feedback->power_valid = 1;
         feedback->omega = omega;
         feedback->omega_tick = frame->tick;
         feedback->omega_valid = 1;
@@ -144,11 +185,11 @@ app_vehicle_can_result_t app_vehicle_can_decode(const app_can_frame_t *frame,
             break;
         case 0x121:
             command->type = APP_CAN_CMD_SPEED_NO_SHOOT;
-            command->value.delta = rx.speed_no_shoot;
+            command->value.angular_velocity = rx.speed_no_shoot;
             break;
         case 0x125:
             command->type = APP_CAN_CMD_SPEED_SHOOT;
-            command->value.delta = rx.speed_shoot;
+            command->value.angular_velocity = rx.speed_shoot;
             break;
         case 0x123:
             command->type = APP_CAN_CMD_ANGLE_NO_SHOOT;
@@ -224,6 +265,47 @@ static void set_effort_raw(uint8_t bytes[8], unsigned slot, int16_t raw)
 unsigned app_vehicle_can_encode(const app_ctrl_can_msg_t *m,
                                 app_can_frame_t frames[APP_VEHICLE_CAN_MAX_FRAMES])
 {
+    if (!m || !frames)
+    {
+        return 0;
+    }
+    if (m->type >= APP_CAN_REF_HEAT && m->type < APP_CAN_OUTPUT_COUNT)
+    {
+        if (m->type != APP_CAN_IMU_REQUEST && CURRENT_BOARD != BOARD_CHASSIS)
+        {
+            return 0;
+        }
+        app_can_frame_t f = {.std_id = m->value.core.id,
+                             .bus = m->value.core.bus,
+                             .dlc = m->value.core.dlc,
+                             .tick = m->tick,
+                             .sequence = m->sequence};
+        if (f.dlc > 8)
+        {
+            return 0;
+        }
+        memcpy(f.data, m->value.core.data, f.dlc);
+        if (m->type == APP_CAN_IMU_REQUEST)
+        {
+            if (f.std_id != 0x31 || (f.bus != 1 && f.bus != 2) || f.dlc != 4 || f.data[0] != 0xCC ||
+                f.data[1] < 1 || f.data[1] > 4 || f.data[2] != 0 || f.data[3] != 0xDD)
+            {
+                return 0;
+            }
+        }
+        else
+        {
+            static const uint32_t ids[4] = {0x151, 0x153, 0x155, 0x157};
+            app_core_referee_t state = {0};
+            if (f.std_id != ids[m->type - APP_CAN_REF_HEAT] || !app_core_referee_decode(&f, &state))
+            {
+                return 0;
+            }
+        }
+        frames[0] = f;
+        return 1;
+    }
+
 #if CURRENT_ROBOT == ROBOT_ARMORED ||                                                              \
     (CURRENT_ROBOT == ROBOT_NAVIGATION && CURRENT_BOARD == BOARD_GIMBAL)
     (void)m;
@@ -290,10 +372,14 @@ unsigned app_vehicle_can_encode(const app_ctrl_can_msg_t *m,
         case APP_CAN_CHASSIS_CMD:
         {
             const app_chassis_speed_cmd_t *v = &m->value.chassis;
-            wire_chassis_speed_cmd_t wire = {
-                lib_quantize_i16(v->vx, 0.001f), lib_quantize_i16(v->vy, 0.001f),
-                lib_quantize_i16(v->vz, 0.001f), lib_quantize_i16(v->power_pct, 0.0001f)};
-            append_frame(frames, &count, 1, 0x111, &wire, 8, m);
+            if (v->power_pct < 0 || v->power_pct > 1 || !wire_quantize(bytes, v->vx, .001f) ||
+                !wire_quantize(bytes + 2, v->vy, .001f) ||
+                !wire_quantize(bytes + 4, v->vz, .001f) ||
+                !wire_quantize(bytes + 6, v->power_pct, .0001f))
+            {
+                return 0;
+            }
+            append_frame(frames, &count, 1, 0x111, bytes, 8, m);
         }
         break;
         case APP_CAN_GIM_FEEDBACK:
@@ -305,32 +391,34 @@ unsigned app_vehicle_can_encode(const app_ctrl_can_msg_t *m,
             {
                 return 0;
             }
-            memcpy(bytes, &m->value.gimbal.yaw_rate, 4);
-            memcpy(bytes + 4, &m->value.gimbal.pitch_rate, 4);
-            append_frame(frames, &count, 1, 0x122, bytes, 8, m);
-            memcpy(bytes, &m->value.gimbal.yaw, 4);
-            memcpy(bytes + 4, &m->value.gimbal.pitch, 4);
-            append_frame(frames, &count, 1, 0x124, bytes, 8, m);
-            int16_t q[4] = {(int16_t)(m->value.gimbal.quat.q0 * 30000),
-                            (int16_t)(m->value.gimbal.quat.q1 * 30000),
-                            (int16_t)(m->value.gimbal.quat.q2 * 30000),
-                            (int16_t)(m->value.gimbal.quat.q3 * 30000)};
-            append_frame(frames, &count, 1, 0x233, q, 8, m);
-            float yaw_deg = lib_rad_to_deg(m->value.gimbal.yaw);
-            float pitch_deg = lib_rad_to_deg(m->value.gimbal.pitch);
-            memcpy(bytes, &yaw_deg, 4);
-            memcpy(bytes + 4, &pitch_deg, 4);
-            append_frame(frames, &count, 1, APP_GIMBAL_CAN_ID_FUSED_YAW_PITCH, bytes, 8, m);
+            wire_quantize(bytes, m->value.gimbal.yaw_rate, .001f);
+            wire_quantize(bytes + 2, m->value.gimbal.pitch_rate, .001f);
+            append_frame(frames, &count, 1, 0x122, bytes, 4, m);
+            wire_quantize(bytes, lib_rad_norm(m->value.gimbal.yaw), .0001f);
+            wire_quantize(bytes + 2, lib_rad_norm(m->value.gimbal.pitch), .0001f);
+            append_frame(frames, &count, 1, 0x124, bytes, 4, m);
+            float q[4] = {m->value.gimbal.quat.q0, m->value.gimbal.quat.q1, m->value.gimbal.quat.q2,
+                          m->value.gimbal.quat.q3};
+            float norm = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+            if (!isfinite(norm) || norm < 1e-6f)
+            {
+                return 0;
+            }
+            for (unsigned i = 0; i < 4; i++)
+            {
+                wire_quantize(bytes + 2 * i, q[i] / norm, 1.0f / 30000.0f);
+            }
+            append_frame(frames, &count, 1, 0x233, bytes, 8, m);
             break;
         }
         case APP_CAN_CHAS_FEEDBACK:
         {
-            int16_t power = (int16_t)lib_clamp(m->value.chassis_state.power * 100, -32768, 32767);
-            memcpy(bytes, &power, 2);
-            append_frame(frames, &count, 1, 0x112, bytes, 8, m);
-            memset(bytes, 0, 8);
-            memcpy(bytes, &m->value.chassis_state.omega, 4);
-            append_frame(frames, &count, 1, 0x119, bytes, 8, m);
+            if (!wire_quantize(bytes, m->value.chassis_state.power, .01f) ||
+                !wire_quantize(bytes + 2, m->value.chassis_state.omega, .001f))
+            {
+                return 0;
+            }
+            append_frame(frames, &count, 1, 0x112, bytes, 4, m);
             break;
         }
         default:

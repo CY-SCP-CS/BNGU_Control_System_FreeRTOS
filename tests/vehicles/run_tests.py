@@ -9,7 +9,7 @@ cc = os.environ.get('HOST_CC', 'gcc')
 includes = ['Self_core', 'Self_core/App/Config', 'Self_core/App/Contracts',
             'Self_core/App/Modules/can', 'Self_core/App/Modules/can/internal',
             'Self_core/Lib/Lib_math', 'Self_core/Lib/Lib_Typedef']
-sources = ['tests/vehicles/test_can_vehicle.c', 'Self_core/App/Modules/can/app_vehicle_can.c',
+sources = ['tests/vehicles/test_can_vehicle.c', 'Self_core/App/Modules/can/app_vehicle_can.c','Self_core/App/Modules/can/app_core_protocol.c',
            'Self_core/App/Modules/can/app_chassis_comm.c',
            'Self_core/App/Modules/can/app_gimbal_comm.c', 'Self_core/Lib/Lib_math/lib_math.c']
 with tempfile.TemporaryDirectory() as tmp:

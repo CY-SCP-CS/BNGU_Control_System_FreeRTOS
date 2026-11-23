@@ -24,7 +24,7 @@ def owner(path):
         for prefix in sorted(paths, key=len, reverse=True):
             if '/'.join(parts[2:]).startswith(prefix + '/'):
                 return 'module:' + paths[prefix]
-    if path.name in ('app_can_data.h', 'app_ctrl_data.h'):
+    if path.name in ('app_can_data.h', 'app_ctrl_data.h', 'app_can_commands.h', 'app_core_protocol.h'):
         return 'Contracts'
     if parts[:2] == ('App', 'Modules'):
         return 'module:' + parts[2]

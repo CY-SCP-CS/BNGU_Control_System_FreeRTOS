@@ -7,13 +7,13 @@
 #ifndef APP_CHASSIS_COMM_H
 #define APP_CHASSIS_COMM_H
 
-#include "App/Vehicles/Sentry/Contracts/app_command_data.h"
+#include "App/Modules/can/app_can_commands.h"
 
 #define APP_CHASSIS_CAN_ID_SPEED_CMD 0x111U      // 底盘速度指令。
 #define APP_CHASSIS_CAN_ID_POWER_FEEDBACK 0x112U // 实际功率反馈。
 #define APP_CHASSIS_CAN_ID_ACKERMANN_CMD 0x113U  // 阿克曼底盘指令。
 #define APP_CHASSIS_CAN_ID_FOLLOW_CMD 0x115U     // 跟随模式指令。
-#define APP_CHASSIS_CAN_ID_OMEGA_FEEDBACK 0x119U // 底盘角速度反馈。
+#define APP_CHASSIS_CAN_ID_OMEGA_FEEDBACK 0x112U // 底盘角速度反馈。
 #define APP_CHASSIS_OMEGA_RAD_S_PER_LSB 0.001f   // 0x111 中 vz 的量化单位，rad/s。
 
 /* 纯协议接口：不保存全局命令状态，rx 由调用任务持有。 */

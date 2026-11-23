@@ -6,7 +6,6 @@
 #include "App/Vehicles/Sentry/Config/sentry_control_config.h"
 #include "App/Vehicles/Sentry/Contracts/app_motor_role.h"
 #include "app_sentry_gimbal.h"
-#include "app_gimbal_legacy.h"
 #include "legacy_control_types.h"
 #include "legacy_motor_limits.h"
 
@@ -65,7 +64,7 @@ typedef struct
 
     struct
     {
-        uint8_t is_active, pitch_increasing;
+        uint8_t is_active, pitch_ratereasing;
     } scan;
 } app_sentry_gimbal_command_state_t;
 
@@ -132,6 +131,10 @@ static app_sentry_gimbal_debug_t app_sentry_gimbal_debug = {
 #define s_pid_pitch app_sentry_gimbal_debug.pid.pitch
 
 static uint32_t s_now_tick;
+static uint32_t s_previous_tick;
+static bool s_previous_tick_valid;
+static float s_can_dt_s;
+static uint8_t s_active_velocity_mode;
 
 static struct
 {
@@ -143,7 +146,7 @@ static void gimbal_scan_update(void);
 static void app_sentry_gimbal_velocity_to_chassis(float, float, float *, float *);
 static void gimbal_reset(void);
 static void gimbal_update_cmd(const app_remote_input_t *input, const legacy_gimbal_comm_rx_t *can,
-                              uint8_t updated_mask);
+                              uint8_t updated_mask, uint8_t velocity_mask);
 static void gimbal_apply_can_cmd(const legacy_gimbal_comm_rx_t *, uint8_t);
 static float gimbal_coord_trans(void);
 static void imu_fusion(const legacy_imu_snapshot_t *imu);
@@ -187,6 +190,8 @@ static void gimbal_reset(void)
     s_pitch_ff.dynamic_lpf.initialized = 0U;
     s_pitch_ff.dynamic_lpf.out = 0.0f;
     s_pitch_ff.current = 0.0f;
+    s_previous_tick_valid = false;
+    s_active_velocity_mode = 0;
     s_control_state.is_settling = 0U;
     s_command_state.can.fire_override = 0U;
     s_command_state.can.pose_is_valid = 0U;
@@ -205,7 +210,7 @@ static void gimbal_reset(void)
  * @note   遥控底盘平移指令从云台坐标系旋转到底盘坐标系；急停状态由输出接口传给任务。
  */
 static void gimbal_update_cmd(const app_remote_input_t *input, const legacy_gimbal_comm_rx_t *can,
-                              uint8_t updated_mask)
+                              uint8_t updated_mask, uint8_t velocity_mask)
 {
     const legacy_gimbal_comm_rx_t can_rx = *can;
 
@@ -220,6 +225,7 @@ static void gimbal_update_cmd(const app_remote_input_t *input, const legacy_gimb
     {
         /* 切换后等待新 CAN 帧；遥控模式则立即按当前 S1 挡位控制发射。 */
         updated_mask = 0U;
+        s_active_velocity_mode = 0;
         s_command_state.data.fire = APP_SENTRY_FIRE_OFF;
         s_command_state.can.fire_override = 0U;
         s_command_state.can.pose_is_valid = 0U;
@@ -263,7 +269,12 @@ static void gimbal_update_cmd(const app_remote_input_t *input, const legacy_gimb
             s_command_state.can.pose_is_valid = 1U;
             s_command_state.scan.is_active = 0U;
         }
-        gimbal_apply_can_cmd(&can_rx, updated_mask);
+        if (updated_mask & pose_mask)
+        {
+            s_active_velocity_mode = updated_mask & (APP_GIMBAL_COMM_UPDATE_SPEED_NO_SHOOT |
+                                                     APP_GIMBAL_COMM_UPDATE_SPEED_SHOOT);
+        }
+        gimbal_apply_can_cmd(&can_rx, updated_mask | (velocity_mask & s_active_velocity_mode));
         if (SENTRY_GIMBAL_SCAN_ENABLE &&
             (!s_command_state.can.pose_is_valid ||
              (uint32_t)(s_now_tick - s_command_state.can.pose_tick_ms) >=
@@ -312,14 +323,14 @@ static void gimbal_apply_can_cmd(const legacy_gimbal_comm_rx_t *rx, uint8_t upda
     if (updated_mask & APP_GIMBAL_COMM_UPDATE_SPEED_NO_SHOOT)
     {
         s_command_state.yaw_tar_angle =
-            lib_rad_norm(s_command_state.yaw_tar_angle + rx->speed_no_shoot.yaw_inc);
-        s_command_state.pitch_tar_angle += rx->speed_no_shoot.pitch_inc;
+            lib_rad_norm(s_command_state.yaw_tar_angle + rx->speed_no_shoot.yaw_rate * s_can_dt_s);
+        s_command_state.pitch_tar_angle += rx->speed_no_shoot.pitch_rate * s_can_dt_s;
     }
     if (updated_mask & APP_GIMBAL_COMM_UPDATE_SPEED_SHOOT)
     {
         s_command_state.yaw_tar_angle =
-            lib_rad_norm(s_command_state.yaw_tar_angle + rx->speed_shoot.yaw_inc);
-        s_command_state.pitch_tar_angle += rx->speed_shoot.pitch_inc;
+            lib_rad_norm(s_command_state.yaw_tar_angle + rx->speed_shoot.yaw_rate * s_can_dt_s);
+        s_command_state.pitch_tar_angle += rx->speed_shoot.pitch_rate * s_can_dt_s;
     }
     if (updated_mask & APP_GIMBAL_COMM_UPDATE_ANGLE_NO_SHOOT)
     {
@@ -331,28 +342,31 @@ static void gimbal_apply_can_cmd(const legacy_gimbal_comm_rx_t *rx, uint8_t upda
         s_command_state.yaw_tar_angle = lib_rad_norm(rx->angle_shoot.yaw_abs);
         s_command_state.pitch_tar_angle = rx->angle_shoot.pitch_abs;
     }
-    if (!s_command_state.can.fire_override && (updated_mask & APP_GIMBAL_COMM_UPDATE_ANGLE_SHOOT))
+    if (!s_command_state.can.fire_override &&
+        (updated_mask & (APP_GIMBAL_COMM_UPDATE_ANGLE_SHOOT | APP_GIMBAL_COMM_UPDATE_SPEED_SHOOT)))
     {
         s_command_state.data.fire = APP_SENTRY_FIRE_ON;
+    }
+    if (!s_command_state.can.fire_override &&
+        (updated_mask &
+         (APP_GIMBAL_COMM_UPDATE_ANGLE_NO_SHOOT | APP_GIMBAL_COMM_UPDATE_SPEED_NO_SHOOT)))
+    {
+        s_command_state.data.fire = APP_SENTRY_FIRE_OFF;
     }
     if (updated_mask & APP_GIMBAL_COMM_UPDATE_SHOOT)
     {
         /* 显式发射指令保持有效，直到再次收到 0x129 或退出当前 CAN 模式。 */
         s_command_state.can.fire_override = 1U;
-        if (rx->shoot.shoot_switch == 0xFFU && rx->shoot.retreat == 0x00U)
+        if (rx->shoot.friction_switch == 0xFFU)
         {
-            s_command_state.data.fire = APP_SENTRY_FIRE_ON;
-        }
-        else if (rx->shoot.shoot_switch == 0xFFU && rx->shoot.retreat == 0xFFU)
-        {
-            s_command_state.data.fire = APP_SENTRY_FIRE_FIR;
-        }
-        else if (rx->shoot.shoot_switch == 0x00U && rx->shoot.retreat == 0xFFU)
-        {
-            s_command_state.data.fire = APP_SENTRY_FIRE_REVERSE;
+            s_command_state.data.fire = rx->shoot.feed_state == 0x00U   ? APP_SENTRY_FIRE_ON
+                                        : rx->shoot.feed_state == 0xAAU ? APP_SENTRY_FIRE_FIR
+                                                                        : APP_SENTRY_FIRE_REVERSE;
         }
         else
         {
+            /* Wire 00/00 means friction off + feed forward. Local actuator interlock
+             * currently inhibits feeding with friction off; this is not a protocol stop marker. */
             s_command_state.data.fire = APP_SENTRY_FIRE_OFF;
         }
     }
@@ -625,7 +639,7 @@ static void gimbal_compute(const legacy_gimbal_input_t *sample)
         lib_pid_reset(&s_pid_pitch);
         s_control_state.is_ready = 1;
     }
-    gimbal_update_cmd(&input, &sample->can, sample->updated_mask);
+    gimbal_update_cmd(&input, &sample->can, sample->updated_mask, sample->active_velocity_mask);
     if (!sample->fire_allowed)
     {
         s_command_state.data.fire = APP_SENTRY_FIRE_OFF;
@@ -669,7 +683,7 @@ void app_sentry_gimbal_init(void)
  * @note   算法步长来自 APP_CONTROL_GIM_DT_S；输入地址只在本次调用中借用。
  * @note   output->shoot.ready 表示首次反馈目标对齐完成；CAN 编码和快照发布由任务层处理。
  */
-void legacy_app_sentry_gimbal_ctrl_1khz(const legacy_gimbal_input_t *input,
+static void legacy_app_sentry_gimbal_ctrl_1khz(const legacy_gimbal_input_t *input,
                                         legacy_gimbal_output_t *output)
 {
     memcpy(s_motor_state.feedback, input->feedback.motor, sizeof(s_motor_state.feedback));
@@ -677,6 +691,10 @@ void legacy_app_sentry_gimbal_ctrl_1khz(const legacy_gimbal_input_t *input,
     s_chassis_state.vw_rx_tick_ms = input->feedback.omega_tick;
     s_chassis_state.vw_is_valid = input->feedback.omega_valid;
     s_now_tick = input->tick;
+    uint32_t elapsed = s_now_tick - s_previous_tick;
+    s_can_dt_s = s_previous_tick_valid && elapsed <= APP_INPUT_CAN_MAX_AGE_MS ? elapsed * .001f : 0;
+    s_previous_tick = s_now_tick;
+    s_previous_tick_valid = true;
     gimbal_compute(input);
     memset(output, 0, sizeof(*output));
     memcpy(output->current, s_motor_state.current, sizeof(output->current));
@@ -692,8 +710,8 @@ void legacy_app_sentry_gimbal_ctrl_1khz(const legacy_gimbal_input_t *input,
     output->shoot.ready = s_control_state.is_ready;
     output->shoot.emergency_stop = s_chassis_state.emergency_stop;
     output->shoot.tick = input->tick;
-    output->chassis.vx =
-        s_chassis_state.emergency_stop ? SENTRY_CHASSIS_ESTOP : s_chassis_state.vx_tar_speed;
+    output->chassis.vx = s_chassis_state.emergency_stop ? 0 : s_chassis_state.vx_tar_speed;
+    output->chassis.power_pct = s_chassis_state.emergency_stop ? 0 : 10000;
     output->chassis.vy = s_chassis_state.vy_tar_speed;
     output->chassis.vz = s_chassis_state.vw_tar_speed;
     if (output->shoot.source == APP_REMOTE_INPUT_CAN)
@@ -716,7 +734,7 @@ static void gimbal_scan_update(void)
     {
         s_command_state.yaw_tar_angle = s_imu_state.yaw_cur_angle;
         s_command_state.pitch_tar_angle = s_imu_state.pitch_cur_angle;
-        s_command_state.scan.pitch_increasing = 0U;
+        s_command_state.scan.pitch_ratereasing = 0U;
         s_command_state.scan.is_active = 1U;
         lib_pid_reset(&s_pid_yaw_large);
         lib_pid_reset(&s_pid_yaw_small);
@@ -742,24 +760,24 @@ static void gimbal_scan_update(void)
         return;
     }
 
-    float pitch_target = s_command_state.pitch_tar_angle + (s_command_state.scan.pitch_increasing
+    float pitch_target = s_command_state.pitch_tar_angle + (s_command_state.scan.pitch_ratereasing
                                                                 ? SENTRY_GIMBAL_SCAN_PITCH_SPEED
                                                                 : -SENTRY_GIMBAL_SCAN_PITCH_SPEED) *
                                                                0.001f;
     if (pitch_target <= pitch_min)
     {
         pitch_target = pitch_min;
-        s_command_state.scan.pitch_increasing = 1U;
+        s_command_state.scan.pitch_ratereasing = 1U;
     }
     else if (pitch_target >= pitch_max)
     {
         pitch_target = pitch_max;
-        s_command_state.scan.pitch_increasing = 0U;
+        s_command_state.scan.pitch_ratereasing = 0U;
     }
     s_command_state.pitch_tar_angle = pitch_target;
     s_command_state.data.pitch_tar_speed =
-        (s_command_state.scan.pitch_increasing ? SENTRY_GIMBAL_SCAN_PITCH_SPEED
-                                               : -SENTRY_GIMBAL_SCAN_PITCH_SPEED);
+        (s_command_state.scan.pitch_ratereasing ? SENTRY_GIMBAL_SCAN_PITCH_SPEED
+                                                : -SENTRY_GIMBAL_SCAN_PITCH_SPEED);
 }
 
 static void app_sentry_gimbal_velocity_to_chassis(float vx_gimbal, float vy_gimbal,
@@ -785,7 +803,6 @@ static void app_sentry_gimbal_velocity_to_chassis(float vx_gimbal, float vy_gimb
  *        by the sole control task; this API is single-instance and non-reentrant.
  */
 #include "app_sentry_gimbal.h"
-#include "app_gimbal_legacy.h"
 #include "App/Vehicles/Sentry/Config/app_sentry_common.h"
 #include "legacy_adapter.h"
 #include "app_data_age.h"
@@ -811,6 +828,9 @@ void app_sentry_gimbal_ctrl_1khz(const app_gimbal_input_t *input, app_gimbal_out
     v->imu.tick = input->imu.tick;
     uint8_t fresh = app_command_fresh_mask(input->can_valid_mask, input->can_tick, input->tick);
     v->updated_mask = input->updated_mask & fresh;
+    /* A valid velocity setpoint is integrated on every control step, not every CAN packet. */
+    v->active_velocity_mask =
+        fresh & (APP_GIMBAL_COMM_UPDATE_SPEED_NO_SHOOT | APP_GIMBAL_COMM_UPDATE_SPEED_SHOOT);
     bool radio_seen = input->dbus.valid || input->dbus.seen;
     bool radio_fresh =
         app_data_fresh(input->dbus.valid, input->dbus.tick, input->tick, APP_INPUT_DBUS_MAX_AGE_MS);
@@ -840,8 +860,9 @@ void app_sentry_gimbal_ctrl_1khz(const app_gimbal_input_t *input, app_gimbal_out
         memset(&v->can.radar_speed, 0, sizeof(v->can.radar_speed));
     }
     /* A timeout inhibits firing; it is not an explicit 0x129 override command. */
-    v->fire_allowed = !can_source ||
-                      (fresh & (APP_GIMBAL_COMM_UPDATE_SHOOT | APP_GIMBAL_COMM_UPDATE_ANGLE_SHOOT));
+    v->fire_allowed =
+        !can_source || (fresh & (APP_GIMBAL_COMM_UPDATE_SHOOT | APP_GIMBAL_COMM_UPDATE_ANGLE_SHOOT |
+                                 APP_GIMBAL_COMM_UPDATE_SPEED_SHOOT));
     legacy_app_sentry_gimbal_ctrl_1khz(v, &s_legacy_output);
     const legacy_gimbal_output_t *o = &s_legacy_output;
     memcpy(output->current, o->current, sizeof(output->current));

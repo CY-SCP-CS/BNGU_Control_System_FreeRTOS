@@ -74,8 +74,8 @@ typedef struct
 
 typedef struct
 {
-    float yaw_inc;   // yaw 角度增量，单位 rad，左转为正。
-    float pitch_inc; // pitch 角度增量，单位 rad，下转为正。
+    float yaw_rate;   // yaw 目标角速度，单位 rad/s，左转为正。
+    float pitch_rate; // pitch 目标角速度，单位 rad/s，下转为正。
 } legacy_gimbal_speed_cmd_t;
 
 typedef struct
@@ -86,8 +86,8 @@ typedef struct
 
 typedef struct
 {
-    uint8_t shoot_switch; // 摩擦轮和拨弹盘模式：00/FF 组合见通信协议。
-    uint8_t retreat;      // 预留控制字节。
+    uint8_t friction_switch; // 摩擦轮和拨弹盘模式：00/FF 组合见通信协议。
+    uint8_t feed_state;      // 预留控制字节。
 } legacy_gimbal_shoot_cmd_t;
 
 typedef struct
@@ -120,7 +120,7 @@ typedef struct
     uint8_t motor_valid[GIMBAL_MOTOR_COUNT];  // 各电机是否已收到有效反馈。
     legacy_power_t power; // 底盘 CAN2 0x212 功率计反馈，含协议电压/电流及 W 功率。
     uint32_t power_tick,  // 最近有效功率计反馈的接收时间戳。
-        omega_tick;       // 云台收到的最近有效 CAN1 0x119 时间戳。
+        omega_tick;       // 云台收到的最近有效 CAN1 0x112 时间戳。
     float omega;          // 底盘对地角速度反馈，单位 rad/s。
     uint8_t power_valid,  // 是否已收到有效功率计反馈。
         omega_valid;      // 是否已收到有效底盘角速度反馈。
@@ -161,8 +161,9 @@ typedef struct
     legacy_can_feedback_t feedback; // 本板电机及底盘角速度反馈副本。
     legacy_gimbal_comm_rx_t can;    // 控制任务保存的各类最新 CAN 指令。
     uint8_t fire_allowed;           // Current source has fresh fire authorization.
-    uint8_t updated_mask;           // 本周期收到的 APP_GIMBAL_COMM_UPDATE_* 位组合。
-    uint32_t tick;                  // 本次云台控制执行的系统时间戳。
+    uint8_t active_velocity_mask;
+    uint8_t updated_mask; // 本周期收到的 APP_GIMBAL_COMM_UPDATE_* 位组合。
+    uint32_t tick;        // 本次云台控制执行的系统时间戳。
 } legacy_gimbal_input_t;
 
 typedef struct
@@ -215,6 +216,6 @@ typedef struct
     int16_t current[4];                   // 右驱动、左驱动、左舵向、右舵向电流；DJI 协议原始值。
     legacy_sentry_chassis_state_t state;  // 当前运动状态、实测功率和功率缩放结果。
     legacy_sentry_chassis_speed_t target; // 限幅后的目标速度；x/y 为 mm/s，w 为 rad/s。
-    float omega;                          // 用于 0x119 反馈的滤波车体角速度，单位 rad/s。
+    float omega;                          // 用于 0x112 反馈的滤波车体角速度，单位 rad/s。
 } legacy_chassis_output_t;
 #endif

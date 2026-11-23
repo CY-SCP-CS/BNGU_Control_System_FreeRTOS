@@ -24,7 +24,7 @@ typedef struct
     float vx;           // x 方向速度，单位 m/s，向前为正。
     float vy;           // y 方向速度，单位 m/s，向左为正。
     float gimbal_angle; // 云台角度 ，单位 rad，向左为正。
-    int16_t custom;     // 协议预留字段。
+    float wz;           // rad/s, core protocol 0x115.
 } app_chassis_follow_cmd_t;
 
 /** 底盘板接收并解包后的全部控制数据。 */

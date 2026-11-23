@@ -3,6 +3,7 @@ app_module(can algorithm
     app_chassis_comm.c
     app_gimbal_comm.c
     app_vehicle_can.c
+    app_core_protocol.c
 )
 app_module(can runtime
     app_task_can.c
